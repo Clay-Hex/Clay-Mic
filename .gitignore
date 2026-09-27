@@ -1,0 +1,67 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+dist/
+dist-ssr/
+*.local
+packages/
+
+# Tauri
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/keyslots/target/
+src-tauri/WixTools/
+src-tauri/Frameworks/
+src-tauri/gen/
+# tauri icon regenerates these; not shipped (Windows-only, conf refs 4 files)
+src-tauri/icons/Square*
+src-tauri/icons/StoreLogo.png
+src-tauri/icons/64x64.png
+src-tauri/icons/icon.png
+src-tauri/icons/icon.icns
+src-tauri/icons/ios/
+src-tauri/icons/android/
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+# Local tooling / agent state
+# 仅忽略本机个人状态；团队共享的配置（如 AGENTS.md）仍应提交。
+.omo/
+.mimocode/
+.codegraph/
+.claude/
+.codex/
+.opencode/
+.cursor/
+.windsurf/
+.clinerules/
+.roo/
+.aider*
+.continue/
+.gemini/
+.kiro/
+.trae/
+.augment/
+.amazonq/
+.cody/
+.devin/
+
