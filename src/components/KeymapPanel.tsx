@@ -50,6 +50,7 @@ const ACTIONS = [
 const CUSTOM_ACTIONS = [
   { id: "clear", label: "清空输入框" },
   { id: "backspace", label: "退格" },
+  { id: "inject_latest", label: "注入最新文本" },
 ];
 const CUSTOM_ACTION_IDS = new Set(CUSTOM_ACTIONS.map((action) => action.id));
 

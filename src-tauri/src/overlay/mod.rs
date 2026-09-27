@@ -49,4 +49,16 @@ impl TextItem {
         self.status = ItemStatus::Ready;
         self
     }
+
+    /// The text that belongs on screen: the LLM's formatting when there is
+    /// any, otherwise the raw transcript; `None` when neither carries text.
+    pub fn injectable_text(&self) -> Option<&str> {
+        if !self.formatted_text.trim().is_empty() {
+            Some(self.formatted_text.as_str())
+        } else if !self.raw_text.trim().is_empty() {
+            Some(self.raw_text.as_str())
+        } else {
+            None
+        }
+    }
 }

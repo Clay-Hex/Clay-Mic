@@ -3,8 +3,9 @@
 //! `keymap.json` decides, per button, what happens when it is pressed:
 //! `voice` / `ignore` (swallow) / `pass` (native) / `send` (swallow + inject a
 //! recorded key or combo) / `exec` (swallow + run a command) / `clear` (swallow
-//! + select-all and delete in the focused field). Suppression is derived from
-//! this config.
+//! + select-all and delete in the focused field) / `backspace` / `inject_latest`
+//! (swallow + push the newest transcript into the focused window). Suppression
+//! is derived from this config.
 
 pub mod buttons;
 
@@ -15,7 +16,8 @@ use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Binding {
-    /// One of: `voice`, `ignore`, `pass`, `send`, `exec`, `clear`.
+    /// One of: `voice`, `ignore`, `pass`, `send`, `exec`, `clear`, `backspace`,
+    /// `inject_latest`.
     pub action: String,
     /// For `send`: the target key/combo, e.g. `Enter`, `Ctrl+C`.
     #[serde(default)]
@@ -141,7 +143,10 @@ impl KeymapConfig {
 
     /// Whether a button's native key should be swallowed.
     fn swallows(&self, button: &str) -> bool {
-        matches!(self.action_of(button), "ignore" | "send" | "voice" | "exec" | "clear" | "backspace")
+        matches!(
+            self.action_of(button),
+            "ignore" | "send" | "voice" | "exec" | "clear" | "backspace" | "inject_latest"
+        )
     }
 
     pub fn suppresses_active(&self, button: &str) -> bool {
@@ -197,7 +202,11 @@ pub fn execute_action(
         }
         "clear" => clear_input(),
         "backspace" => backspace(),
-        _ => Ok(()),
+        "inject_latest" => inject_latest(),
+        // `swallows()` routes every action it swallows into this match; these
+        // three are no-ops by design, anything else is a missed arm.
+        "voice" | "ignore" | "pass" => Ok(()),
+        action => Err(format!("未实现的动作：{action}")),
     }
 }
 
@@ -389,6 +398,33 @@ fn backspace() -> Result<(), String> {
 #[cfg(all(feature = "inject", not(target_os = "windows")))]
 fn backspace() -> Result<(), String> {
     send_key_spec("Backspace")
+}
+
+/// Push the newest transcript into the focused window.
+///
+/// Text is picked like the history list's inject button (formatted, otherwise
+/// raw), guarded like `voice`'s automatic injection (own window in front →
+/// skip). Only the newest entry counts: an entry without text yet (failed or
+/// still transcribing) reports an error rather than falling back to an older
+/// transcript.
+#[cfg(feature = "inject")]
+fn inject_latest() -> Result<(), String> {
+    let Some(state) = crate::runtime::state() else {
+        return Err("应用尚未初始化".into());
+    };
+    let Some(item) = state.items_page(1, 1).0.into_iter().next() else {
+        return Err("没有可注入的文本".into());
+    };
+    let Some(text) = item.injectable_text() else {
+        return Err("最新一条还没有文字".into());
+    };
+
+    if crate::inject::foreground_is_self() {
+        return Err("本程序窗口在前台，已跳过注入".into());
+    }
+
+    let method = state.config.lock().unwrap().inject.method.clone();
+    crate::inject::inject(text, &method)
 }
 
 /// Send `<modifiers>+<single char>` as one `SendInput` batch of virtual-key
