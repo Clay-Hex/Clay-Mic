@@ -1,0 +1,93 @@
+.style-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.style-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.style-tile:hover { border-color: #d1d5db; }
+.style-tile.is-selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.tile-shot {
+  position: relative;
+  overflow: hidden;
+  overflow: clip;
+  border-radius: 8px;
+  background:
+    radial-gradient(220px 140px at 20% 0%, #1f2a44, transparent 70%),
+    radial-gradient(220px 160px at 100% 100%, #2a1f3d, transparent 70%),
+    #0e1320;
+}
+.tile-ov { width: 150px; height: 175px; }
+.tile-ind { width: 150px; height: 117px; }
+
+.tile-ov .tile-scaler {
+  width: 360px;
+  height: 420px;
+  padding: 16px 16px 32px;
+  zoom: 0.4167;
+}
+.tile-ind .tile-scaler {
+  width: 360px;
+  height: 280px;
+  zoom: 0.4167;
+}
+.tile-ind .thumb-ind {
+  width: 360px;
+  height: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+/* Chromium misrenders backdrop-filter/filter under a scaled ancestor; flatten
+   the scaled-down previews so they cannot distort the surrounding page. */
+.tile-shot .ov-card,
+.tile-shot .ov-card::before,
+.tile-shot .ov-card::after,
+.tile-shot .ind-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+}
+
+.tile-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+.tile-radio {
+  position: relative;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid #cbd5e1;
+}
+.tile-radio.is-on { border-color: #3b82f6; }
+.tile-radio.is-on::after {
+  content: "";
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background: #3b82f6;
+}

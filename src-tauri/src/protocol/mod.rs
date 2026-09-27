@@ -1,0 +1,3 @@
+pub mod atvv;
+
+pub const ATVV_SERVICE_UUID: &str = "AB5E0001-5A21-4F05-BC7D-AF01F617B664";

@@ -1,0 +1,13 @@
+[package]
+name = "clay-tap"
+version = "1.0.0"
+edition = "2021"
+description = "WUDFHost HID tap hook DLL: intercept back/volume reports and send UDP events."
+license = "MIT"
+
+[lib]
+name = "clay_tap"
+crate-type = ["cdylib"]
+
+[dependencies]
+min_hook_rs = "2.2"

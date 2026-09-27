@@ -1,0 +1,386 @@
+/* Voice indicator window styles. ids match config.indicator.style. */
+
+.ind-root {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  user-select: none;
+}
+
+.ind-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 30px;
+  border-radius: 20px;
+  background: rgba(15, 23, 42, 0.74);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow:
+    0 8px 22px -12px rgba(0, 0, 0, 0.6),
+    0 0 16px -8px var(--c);
+}
+
+.ind-phase-recording { --c: #3b82f6; }
+.ind-phase-transcribing { --c: #6366f1; }
+.ind-phase-formatting { --c: #a855f7; }
+
+.ind-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e2e8f0;
+  letter-spacing: 0.3px;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
+}
+
+.ind-time {
+  display: block;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+  color: #94a3b8;
+}
+
+.ind-partial {
+  display: flex;
+  justify-content: flex-end;
+  width: 220px;
+  overflow: hidden;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #cbd5e1;
+  opacity: 0.9;
+}
+
+/* flex-end anchors the newest text to the right; older text is clipped away. */
+.ind-partial > span {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.ind-mic { width: 20px; height: 20px; }
+
+/* ============================================================
+   pulse — 脉冲麦克风
+   ============================================================ */
+.ind-pulse {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.ind-pulse .orb {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+}
+.ind-pulse .ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--c);
+  animation: ind-pulse 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.ind-pulse .ring:nth-child(2) { animation-delay: 0.6s; }
+.ind-pulse .core {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--c), #0ea5e9);
+  box-shadow: 0 8px 20px -8px var(--c);
+}
+.ind-pulse .bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 20px;
+}
+.ind-pulse .bars i {
+  width: 5px;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(var(--c), #0ea5e9);
+  transform-origin: bottom;
+  animation: ind-bar 0.9s ease-in-out infinite;
+}
+.ind-pulse .bars i:nth-child(1) { animation-delay: 0s; }
+.ind-pulse .bars i:nth-child(2) { animation-delay: 0.12s; }
+.ind-pulse .bars i:nth-child(3) { animation-delay: 0.24s; }
+.ind-pulse .bars i:nth-child(4) { animation-delay: 0.36s; }
+.ind-pulse .bars i:nth-child(5) { animation-delay: 0.48s; }
+
+/* ============================================================
+   spectrum — 频谱律动
+   ============================================================ */
+.ind-spectrum .bars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 56px;
+}
+.ind-spectrum .bars i {
+  width: 5px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #22d3ee, var(--c));
+  box-shadow: 0 0 10px -2px var(--c);
+  animation: ind-spec 1s ease-in-out infinite;
+}
+.ind-spectrum .bars i:nth-child(1) { height: 22%; animation-delay: 0s; }
+.ind-spectrum .bars i:nth-child(2) { height: 45%; animation-delay: 0.1s; }
+.ind-spectrum .bars i:nth-child(3) { height: 70%; animation-delay: 0.2s; }
+.ind-spectrum .bars i:nth-child(4) { height: 92%; animation-delay: 0.3s; }
+.ind-spectrum .bars i:nth-child(5) { height: 62%; animation-delay: 0.4s; }
+.ind-spectrum .bars i:nth-child(6) { height: 100%; animation-delay: 0.5s; }
+.ind-spectrum .bars i:nth-child(7) { height: 62%; animation-delay: 0.4s; }
+.ind-spectrum .bars i:nth-child(8) { height: 92%; animation-delay: 0.3s; }
+.ind-spectrum .bars i:nth-child(9) { height: 70%; animation-delay: 0.2s; }
+.ind-spectrum .bars i:nth-child(10) { height: 45%; animation-delay: 0.1s; }
+.ind-spectrum .bars i:nth-child(11) { height: 22%; animation-delay: 0s; }
+
+/* ============================================================
+   orbit — 轨道光环
+   ============================================================ */
+.ind-orbit .orbit {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+}
+.ind-orbit .track {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(99, 102, 241, 0.22);
+}
+.ind-orbit .arc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--c);
+  border-right-color: #6366f1;
+  animation: ind-spin 0.9s linear infinite;
+}
+.ind-orbit .arc.slow {
+  inset: 8px;
+  border-top-color: #a78bfa;
+  border-right-color: transparent;
+  animation-duration: 1.6s;
+  animation-direction: reverse;
+}
+.ind-orbit .core {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--c), #6366f1);
+  box-shadow: 0 0 22px -4px var(--c);
+}
+
+/* ============================================================
+   particles — 粒子轨道
+   ============================================================ */
+.ind-particles .wrap {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+}
+.ind-particles .core {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, var(--c) 55%, #1d4ed8);
+  box-shadow: 0 0 26px -2px var(--c);
+  animation: ind-breathe 2s ease-in-out infinite;
+}
+.ind-particles .spin {
+  position: absolute;
+  inset: 0;
+  animation: ind-spin 3.2s linear infinite;
+}
+.ind-particles .spin.b { animation-duration: 4.4s; animation-direction: reverse; }
+.ind-particles .spin.c { animation-duration: 5.6s; }
+.ind-particles .dot {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 12px var(--c);
+}
+.ind-particles .spin.b .dot {
+  background: #a78bfa;
+  box-shadow: 0 0 12px #a78bfa;
+}
+.ind-particles .spin.c .dot {
+  width: 6px;
+  height: 6px;
+  background: #7dd3fc;
+  box-shadow: 0 0 10px #7dd3fc;
+}
+
+/* ============================================================
+   glow — 呼吸光晕
+   ============================================================ */
+.ind-glow .wrap {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+}
+.ind-glow .halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--c), transparent 70%);
+  filter: blur(6px);
+  opacity: 0.7;
+  animation: ind-glow 2.4s ease-in-out infinite;
+}
+.ind-glow .halo.b {
+  inset: 16px;
+  animation-delay: 0.4s;
+  background: radial-gradient(circle, #a78bfa, transparent 70%);
+}
+.ind-glow .core {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 24px 6px var(--c);
+  animation: ind-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes ind-pulse {
+  0% { transform: scale(0.55); opacity: 0.5; }
+  80%, 100% { transform: scale(1.7); opacity: 0; }
+}
+@keyframes ind-bar {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
+}
+@keyframes ind-spec {
+  0%, 100% { transform: scaleY(0.45); }
+  50% { transform: scaleY(1); }
+}
+@keyframes ind-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes ind-breathe {
+  0%, 100% { transform: scale(0.86); }
+  50% { transform: scale(1.06); }
+}
+@keyframes ind-glow {
+  0%, 100% { transform: scale(0.82); opacity: 0.75; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+/* ============================================================
+   remote-wave — 遥控器声波（产品图标造型：遥控器 + 语音键 + 声波）
+   ============================================================ */
+.ind-remote-wave {
+  position: relative;
+  width: 96px;
+  height: 72px;
+}
+.ind-remote-wave .body {
+  position: absolute;
+  left: 4px;
+  top: 6px;
+  width: 24px;
+  height: 60px;
+  border-radius: 12px;
+  background: #1e293b;
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.28);
+}
+.ind-remote-wave .hl {
+  position: absolute;
+  left: 9px;
+  top: 14px;
+  width: 4px;
+  height: 44px;
+  border-radius: 2px;
+  background: #334155;
+}
+.ind-remote-wave .key {
+  position: absolute;
+  left: 9px;
+  top: 13px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #22d3ee;
+  animation: ind-rw-key 1.6s ease-in-out infinite;
+}
+.ind-remote-wave .w {
+  position: absolute;
+  border: 3px solid transparent;
+  border-right-color: #22d3ee;
+  border-radius: 50%;
+  animation: ind-rw-wave 1.6s ease-out infinite;
+}
+.ind-remote-wave .w1 {
+  left: 34px;
+  top: 12px;
+  width: 16px;
+  height: 16px;
+  animation-delay: 0s;
+}
+.ind-remote-wave .w2 {
+  left: 44px;
+  top: 8px;
+  width: 24px;
+  height: 24px;
+  animation-delay: 0.32s;
+}
+.ind-remote-wave .w3 {
+  left: 54px;
+  top: 3px;
+  width: 34px;
+  height: 34px;
+  animation-delay: 0.64s;
+}
+@keyframes ind-rw-wave {
+  0% {
+    transform: translateX(-12px) scale(0.65);
+    opacity: 0;
+  }
+  22% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(8px) scale(1.1);
+    opacity: 0;
+  }
+}
+@keyframes ind-rw-key {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(34, 211, 238, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(34, 211, 238, 0.95);
+  }
+}

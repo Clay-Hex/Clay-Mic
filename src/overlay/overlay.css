@@ -1,0 +1,440 @@
+/* Overlay window styles. Four selectable themes, ids match config.overlay.style. */
+
+.ov-root {
+  height: 100vh;
+  width: 100vw;
+  padding: 16px 16px 32px;
+  display: flex;
+  user-select: none;
+}
+
+.ov-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.ov-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+.ov-title kbd {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.ov-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+  opacity: 0.7;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+}
+.ov-close:hover {
+  background: #ef4444;
+  color: #fff;
+  opacity: 1;
+}
+
+.ov-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+.ov-list::-webkit-scrollbar { width: 6px; }
+.ov-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 3px;
+}
+
+.ov-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.ov-item:last-child { margin-bottom: 0; }
+
+.ov-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ov-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ov-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ov-status.tone-busy { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+.ov-status.tone-ok { background: rgba(16, 185, 129, 0.18); color: #34d399; }
+.ov-status.tone-muted { background: rgba(148, 163, 184, 0.16); color: #94a3b8; }
+.ov-status.tone-fail { background: rgba(239, 68, 68, 0.18); color: #f87171; }
+
+.ov-copy,
+.ov-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.ov-copy { width: 22px; padding: 0; }
+.ov-copy:hover,
+.ov-retry:hover { background: rgba(148, 163, 184, 0.18); color: #e2e8f0; }
+.ov-retry { color: #f87171; }
+.ov-theme-clean .ov-copy,
+.ov-theme-clean .ov-retry { color: #64748b; }
+.ov-theme-clean .ov-copy:hover,
+.ov-theme-clean .ov-retry:hover { background: #eef2f7; color: #334155; }
+.ov-theme-clean .ov-status.tone-busy { background: #fef3c7; color: #b45309; }
+.ov-theme-clean .ov-status.tone-ok { background: #d1fae5; color: #047857; }
+.ov-theme-clean .ov-status.tone-muted { background: #f1f5f9; color: #64748b; }
+.ov-theme-clean .ov-status.tone-fail { background: #fee2e2; color: #b91c1c; }
+
+.ov-title-left {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.ov-banner-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+.ov-banner-inline .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ov-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ov-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.ov-theme-clean .ov-banner-inline { color: #2563eb; }
+
+.ov-text {
+  line-height: 1.5;
+  word-break: break-word;
+}
+.ov-time {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.ov-foot {
+  padding: 9px 14px;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  color: #64748b;
+}
+
+.ov-confirm-inline {
+  font-size: 10px;
+  color: #f87171;
+  white-space: nowrap;
+}
+.ov-theme-clean .ov-confirm-inline { color: #dc2626; }
+
+.ov-resize {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+  color: #94a3b8;
+  opacity: 0.55;
+  background: repeating-linear-gradient(
+    135deg,
+    currentColor 0 1.5px,
+    transparent 1.5px 4px
+  );
+}
+
+.ov-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* ============================================================
+   aurora — 极光玻璃
+   ============================================================ */
+.ov-theme-aurora .ov-card {
+  background: rgba(13, 19, 33, 0.78);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.06),
+    0 10px 22px -14px rgba(34, 211, 238, 0.5),
+    0 6px 18px -12px rgba(167, 139, 250, 0.45);
+}
+.ov-theme-aurora .ov-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #22d3ee, #a78bfa, transparent);
+  opacity: 0.9;
+}
+.ov-theme-aurora .ov-title {
+  color: #94a3b8;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+.ov-theme-aurora .ov-title kbd {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+}
+.ov-theme-aurora .ov-item { color: #cbd5e1; }
+.ov-theme-aurora .ov-item:hover { background: rgba(148, 163, 184, 0.08); }
+.ov-theme-aurora .ov-item.is-active {
+  background: linear-gradient(120deg, rgba(34, 211, 238, 0.18), rgba(167, 139, 250, 0.16));
+  box-shadow:
+    inset 0 0 0 1px rgba(125, 211, 252, 0.35),
+    0 8px 24px -12px rgba(34, 211, 238, 0.6);
+  color: #f1f5f9;
+}
+.ov-theme-aurora .ov-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(#22d3ee, #a78bfa);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.9);
+}
+
+/* ============================================================
+   hud — 霓虹 HUD
+   ============================================================ */
+.ov-theme-hud .ov-card {
+  background:
+    linear-gradient(rgba(5, 7, 13, 0.96), rgba(5, 7, 13, 0.96)),
+    repeating-linear-gradient(0deg, rgba(34, 211, 238, 0.06) 0 1px, transparent 1px 3px);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 10px;
+  font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+  box-shadow:
+    0 0 12px -4px rgba(34, 211, 238, 0.35),
+    0 12px 26px -18px rgba(34, 211, 238, 0.5);
+}
+.ov-theme-hud .ov-card::before,
+.ov-theme-hud .ov-card::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #22d3ee;
+  opacity: 0.85;
+}
+.ov-theme-hud .ov-card::before {
+  top: -1px;
+  left: -1px;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 8px 0 0 0;
+}
+.ov-theme-hud .ov-card::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: 0;
+  border-top: 0;
+  border-radius: 0 0 8px 0;
+}
+.ov-theme-hud .ov-title {
+  color: #22d3ee;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.18);
+  text-transform: uppercase;
+}
+.ov-theme-hud .ov-title kbd {
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  color: #22d3ee;
+}
+.ov-theme-hud .ov-item { color: #7dd3fc; border-radius: 6px; }
+.ov-theme-hud .ov-item:hover { background: rgba(34, 211, 238, 0.07); }
+.ov-theme-hud .ov-item.is-active {
+  padding-left: 20px;
+  background: rgba(34, 211, 238, 0.12);
+  box-shadow:
+    inset 0 0 0 1px rgba(34, 211, 238, 0.45),
+    0 0 18px -6px rgba(34, 211, 238, 0.8);
+  color: #e0f7ff;
+}
+.ov-theme-hud .ov-item.is-active::before {
+  content: ">";
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #22d3ee;
+  text-shadow: 0 0 8px rgba(34, 211, 238, 0.9);
+}
+.ov-theme-hud .ov-time { color: #38bdf8; opacity: 0.6; }
+.ov-theme-hud .ov-foot {
+  color: #22d3ee;
+  opacity: 0.7;
+  border-top: 1px solid rgba(34, 211, 238, 0.15);
+}
+
+/* ============================================================
+   deepspace — 深空流光
+   ============================================================ */
+.ov-theme-deepspace .ov-card {
+  background: linear-gradient(180deg, #0d1526, #0a101d 60%);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow:
+    0 12px 26px -18px rgba(59, 130, 246, 0.6),
+    0 6px 18px -14px rgba(167, 139, 250, 0.55);
+}
+.ov-theme-deepspace .ov-card::before {
+  content: "";
+  position: absolute;
+  inset: -40% 20% auto 20%;
+  height: 220px;
+  background: radial-gradient(closest-side, rgba(99, 102, 241, 0.5), transparent 70%);
+  filter: blur(10px);
+  pointer-events: none;
+}
+.ov-theme-deepspace .ov-title {
+  color: #cbd5e1;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+.ov-theme-deepspace .ov-title span::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  box-shadow: 0 0 10px rgba(96, 165, 250, 0.9);
+}
+.ov-theme-deepspace .ov-title kbd {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+}
+.ov-theme-deepspace .ov-list { position: relative; }
+.ov-theme-deepspace .ov-item { color: #94a3b8; }
+.ov-theme-deepspace .ov-item:hover { background: rgba(148, 163, 184, 0.06); }
+.ov-theme-deepspace .ov-item.is-active {
+  background: linear-gradient(120deg, #3b82f6, #7c3aed);
+  color: #fff;
+  box-shadow: 0 10px 26px -12px rgba(99, 102, 241, 0.9);
+  transform: translateY(-1px);
+}
+.ov-theme-deepspace .ov-item.is-active .ov-time { color: rgba(255, 255, 255, 0.75); }
+.ov-theme-deepspace .ov-foot {
+  color: #64748b;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+/* ============================================================
+   clean — 净白悬浮
+   ============================================================ */
+.ov-theme-clean .ov-card {
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  color: #475569;
+  box-shadow:
+    0 10px 24px -16px rgba(15, 23, 42, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+.ov-theme-clean .ov-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  opacity: 0.85;
+}
+.ov-theme-clean .ov-title {
+  color: #64748b;
+  border-bottom: 1px solid #eef2f7;
+}
+.ov-theme-clean .ov-title kbd {
+  background: #f1f5f9;
+  color: #64748b;
+}
+.ov-theme-clean .ov-item { color: #475569; }
+.ov-theme-clean .ov-item:hover { background: #f8fafc; }
+.ov-theme-clean .ov-item.is-active {
+  background: linear-gradient(120deg, #eff6ff, #f5f3ff);
+  box-shadow: inset 0 0 0 1px #bfdbfe;
+  color: #1e3a8a;
+}
+.ov-theme-clean .ov-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(#3b82f6, #8b5cf6);
+}
+.ov-theme-clean .ov-time { color: #94a3b8; }
+.ov-theme-clean .ov-empty { color: #94a3b8; }
+.ov-theme-clean .ov-foot {
+  color: #94a3b8;
+  border-top: 1px solid #eef2f7;
+}
