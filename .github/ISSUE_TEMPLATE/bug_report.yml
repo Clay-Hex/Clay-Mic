@@ -1,0 +1,106 @@
+name: Bug 报告
+description: 提交一个 bug 报告
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提交 bug 报告。请尽量填写以下信息，帮助我们更快定位问题。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清晰地描述你遇到了什么问题
+      placeholder: 请描述 bug 的具体表现
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: 操作系统版本
+      description: 例如 Windows 11 23H2
+      placeholder: Windows 11 23H2
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: clay-mic 版本
+      description: 设置页底部或 package.json 中查看
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stt-backend
+    attributes:
+      label: STT 后端
+      description: 你使用的语音识别后端
+      options:
+        - CPU
+        - CUDA 12.4
+        - CUDA 11.8
+    validations:
+      required: true
+
+  - type: input
+    id: stt-model
+    attributes:
+      label: Whisper 模型
+      description: 例如 large-v3-turbo、large-v3-turbo-q5_0
+      placeholder: large-v3-turbo
+    validations:
+      required: false
+
+  - type: input
+    id: remote-model
+    attributes:
+      label: 遥控器型号
+      description: 例如小米盒子 5 出厂遥控器 (ARN9)
+      placeholder: 小米盒子 5 出厂遥控器 (ARN9)
+    validations:
+      required: false
+
+  - type: input
+    id: vid-pid
+    attributes:
+      label: 遥控器 VID:PID
+      description: 设备管理器中可查，格式为 VID:PID（如 1915:EEEF）
+      placeholder: "VID:PID"
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请按顺序描述如何触发这个 bug
+      placeholder: |
+        1. 打开设置页面
+        2. 点击「下载运行时」
+        3. 出现错误 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: 日志
+      description: |
+        日志文件位于 `%LOCALAPPDATA%/clay-mic/clay-mic.log`。
+        请将相关日志内容粘贴到此处（可截取错误发生前后的片段）。
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: 确认
+      options:
+        - label: 我已搜索过已有 Issue，确认没有重复
+          required: true

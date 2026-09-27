@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  # 长期分支的每次提交都验证。
+  push:
+    branches: [main, dev]
+  # 任意 PR（含 feature → dev、dev → main）都验证。
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, test & build (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # tauri.conf.json 把 target/release/clay_tap.dll 作为资源引用，
+      # 先产出它，后续对 clay-mic 的 cargo check 才能通过。
+      - name: Build tap DLL
+        run: npm run build:tap:release
+
+      - name: Check Rust workspace
+        run: npm run check:rust
+
+  # PR 标题须符合 Conventional Commits，squash 合并后即为提交信息。
+  pr-title:
+    name: Conventional PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish (Windows)
+    # 只在 tag 上运行；workflow_dispatch 误选到分支时自动跳过。
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整历史来校验 tag 是否落在 main 上
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # 只在 main 上发布：tag 指向的提交必须是 origin/main 的祖先，
+      # 防止误在 dev / feature 分支打 tag 出包。
+      - name: Verify tag is on main
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag ${GITHUB_REF_NAME} 不在 main 分支上，拒绝发布"
+            exit 1
+          fi
+          echo "✓ tag ${GITHUB_REF_NAME} 位于 main 分支"
+
+      # package.json 是版本唯一源；其余 4 处必须与之一致。
+      # package.mjs 打包时内部也会再查一次，这里提前失败给出更清晰的报错。
+      - name: Verify version consistency
+        run: npm run version:sync -- --check
+
+      # tag（vX.Y.Z）必须与 package.json 版本一致，否则拒绝发版。
+      - name: Verify tag matches package.json
+        shell: bash
+        run: |
+          pkg="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "package.json = ${pkg} / tag = ${GITHUB_REF_NAME}"
+          if [ "$pkg" != "$tag" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} 与 package.json 版本 ${pkg} 不一致"
+            exit 1
+          fi
+
+      # tauri build --no-bundle（含 beforeBuildCommand：tap DLL + 前端 + keyslots）
+      # → 组装 packages/Clay-Mic-<version>/ 并生成 portable.zip
+      - name: Package
+        run: npm run package
+
+      # 与本地 CHANGELOG 同源：用 git-cliff 生成本次 Release 正文。
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*.zip
+          body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: true
