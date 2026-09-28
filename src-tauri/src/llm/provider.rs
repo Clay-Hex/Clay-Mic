@@ -5,6 +5,26 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// A user-defined connection: one endpoint bound to exactly one model. Kept
+/// out of the presets so the model never has to be looked up anywhere — there
+/// is no list to fetch for such an entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomProvider {
+    /// Stable key: the config's `provider` field holds it while this entry is
+    /// selected, and `api_keys` / `models` remember values under it. It
+    /// survives a rename so those two never lose track of the entry.
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    /// Which thinking field this endpoint accepts: `""` for none, `effort`
+    /// (`reasoning_effort`), `toggle` (`thinking.type`), `enable`
+    /// (`enable_thinking`). Chat-compatible vendors disagree on the field, and
+    /// guessing it from the model id is what puts parameters on the wire a
+    /// gateway never asked for.
+    #[serde(default)]
+    pub thinking: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
     #[serde(default = "default_llm_enabled")]
@@ -20,6 +40,8 @@ pub struct LlmConfig {
     pub api_keys: HashMap<String, String>,
     #[serde(default)]
     pub models: HashMap<String, String>,
+    #[serde(default)]
+    pub custom_providers: Vec<CustomProvider>,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
     #[serde(default = "default_max_tokens")]
@@ -50,6 +72,7 @@ impl Default for LlmConfig {
             reasoning: String::new(),
             api_keys: HashMap::new(),
             models: HashMap::new(),
+            custom_providers: Vec::new(),
             timeout_secs: default_timeout_secs(),
             max_tokens: default_max_tokens(),
         }
@@ -247,6 +270,58 @@ fn apply_thinking(body: &mut serde_json::Value, provider: &str, model: &str, rea
     }
 }
 
+/// Thinking parameters for a user-defined endpoint: write exactly the shape
+/// the entry declares and nothing else. No vendor is inferred from the model
+/// id here, so the gateway only ever sees the field it advertised.
+///
+/// `reasoning` means what it means everywhere else — an empty level is off.
+fn apply_custom_thinking(body: &mut serde_json::Value, style: &str, reasoning: &str) {
+    let level = reasoning.trim();
+    let enabled = !level.is_empty();
+    match style {
+        // `none` is the value that actually switches thinking off where the
+        // endpoint documents it (qwen3.8, u2-med, AIHubMix all do). One that
+        // does not answers with an error instead of quietly thinking anyway,
+        // which is how a wrong shape gets noticed in the log.
+        "effort" => {
+            body["reasoning_effort"] = serde_json::json!(if enabled { level } else { "none" });
+        }
+        "toggle" => {
+            body["thinking"] = serde_json::json!({
+                "type": if enabled { "enabled" } else { "disabled" }
+            });
+        }
+        "enable" => {
+            body["enable_thinking"] = serde_json::json!(enabled);
+            body["chat_template_kwargs"] = serde_json::json!({ "enable_thinking": enabled });
+        }
+        // Empty style: the entry asked for no injection, the server decides.
+        _ => {}
+    }
+}
+
+/// The thinking fields present in a request body, for the log. Empty output
+/// is the interesting case: nothing was sent, so the server's own default —
+/// on most gateways, thinking — is what runs.
+fn thinking_fields(body: &serde_json::Value) -> String {
+    const KEYS: [&str; 5] = [
+        "reasoning_effort",
+        "reasoning",
+        "thinking",
+        "enable_thinking",
+        "chat_template_kwargs",
+    ];
+    let present: Vec<String> = KEYS
+        .iter()
+        .filter_map(|key| body.get(key).map(|value| format!("{key}={value}")))
+        .collect();
+    if present.is_empty() {
+        "(none)".to_string()
+    } else {
+        present.join(" ")
+    }
+}
+
 /// A streamed piece of the model output.
 pub enum LlmDelta {
     Reasoning(String),
@@ -311,7 +386,27 @@ impl LlmProvider for OpenAiProvider {
             "stream": true,
             "stream_options": {"include_usage": true},
         });
-        apply_thinking(&mut body, &self.config.provider, &self.config.model, &self.config.reasoning);
+        // A user-defined entry names the field shape itself; anything else is
+        // a guess about the vendor that a gateway may reject outright.
+        match self
+            .config
+            .custom_providers
+            .iter()
+            .find(|entry| entry.id == self.config.provider)
+            .map(|entry| entry.thinking.as_str())
+        {
+            Some(style) => apply_custom_thinking(&mut body, style, &self.config.reasoning),
+            None => apply_thinking(
+                &mut body,
+                &self.config.provider,
+                &self.config.model,
+                &self.config.reasoning,
+            ),
+        }
+
+        // The settings select says one thing, the wire decides the other;
+        // "it still thinks" needs the fields that actually went out.
+        log::info!("llm: thinking → {}", thinking_fields(&body));
 
         let mut response = self
             .client
@@ -386,6 +481,16 @@ impl LlmProvider for OpenAiProvider {
                                     "llm: first reasoning token after {}ms",
                                     started.elapsed().as_millis()
                                 );
+                                // The request asked for thinking off, yet the
+                                // stream carries it: the switch went out, the
+                                // endpoint ignored it. Naming the fields that
+                                // were sent points straight at a wrong shape.
+                                if self.config.reasoning.trim().is_empty() {
+                                    log::warn!(
+                                        "llm: thinking arrived although it was turned off (sent: {}) — endpoint ignored the switch",
+                                        thinking_fields(&body)
+                                    );
+                                }
                             }
                             on_event(LlmDelta::Reasoning(reasoning.to_string()));
                         }
