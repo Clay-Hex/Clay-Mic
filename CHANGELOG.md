@@ -5,6 +5,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-09-28
+
+### 修复
+
+- 模型能力列表刷新失败与下载过慢
+- 发版生成的 CHANGELOG 标题应为版本号而非 Unreleased
+
+### 新增
+
+- 按键映射新增「注入最新文本」自定义动作
+- 按键配置支持长按行为
+- LLM 支持自定义 Provider 与思考参数形态
 ## [1.0.0] - 2026-09-27
 
 首个公开版本。
