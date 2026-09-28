@@ -340,11 +340,7 @@ fn finalize(session: ActiveSession) {
 
 #[cfg(feature = "inject")]
 fn auto_inject(item: &mut TextItem) {
-    let text = if !item.formatted_text.trim().is_empty() {
-        item.formatted_text.as_str()
-    } else if !item.raw_text.trim().is_empty() {
-        item.raw_text.as_str()
-    } else {
+    let Some(text) = item.injectable_text() else {
         return;
     };
 

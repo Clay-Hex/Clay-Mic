@@ -164,7 +164,7 @@ npm run package   # tauri build + 组装 packages/Clay-Mic-<版本>/ 与 portabl
 `CHANGELOG.md` 由 [git-cliff](https://git-cliff.org/) 依据 Conventional Commits 自动生成。发版时由 `version` 钩子把新版本一节**追加**到文件顶部（`--prepend`），**不会重写已有内容**；`v1.0.0` 一节为手工冻结的首版简介，其后各版本由工具维护。
 
 ```bash
-npm run changelog            # 追加未发布的一节到 CHANGELOG.md 顶部
+npm run changelog            # 追加新版本一节到 CHANGELOG.md 顶部（标题取 package.json 版本号）
 npm run changelog -- -o -    # 仅输出到标准输出，不落盘
 ```
 

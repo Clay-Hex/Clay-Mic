@@ -235,27 +235,27 @@ fn run_capture_loop(api: &Driver, ctx: *mut std::ffi::c_void) {
 ///
 /// `voice` is driven by the remote's ATVV stream events (see `crate::voice`),
 /// not by the HID key edge — here the key is only swallowed so it does not
-/// leak F5 into the focused application. Other actions fire on the press edge.
+/// leak F5 into the focused application. Everything else is resolved by
+/// [`crate::keymap::on_edge`], which fires a long press once the hold reaches
+/// the threshold while the button is still down, and lets a hold that ends
+/// sooner answer on the release edge.
 fn process_target_stroke(stroke: &KeyEvent, key_up: bool) {
     let Some(button_id) = crate::keymap::buttons::scan_code_to_button(stroke.scan_code) else {
         return;
     };
-    let (action, key, command, terminal_exit) = crate::keymap::binding_for(button_id);
-
-    if action == "voice" {
+    let Some((action, key, command, terminal_exit)) = crate::keymap::on_edge(button_id, !key_up)
+    else {
         return;
-    }
+    };
 
-    if !key_up {
-        log::info!("button={button_id} action={action} key={key:?} command={command:?}");
-        if let Err(error) = crate::keymap::execute_action(
-            &action,
-            key.as_deref(),
-            command.as_deref(),
-            &terminal_exit,
-        ) {
-            log::warn!("button={button_id} action={action} failed: {error}");
-        }
+    log::info!("button={button_id} action={action} key={key:?} command={command:?}");
+    if let Err(error) = crate::keymap::execute_action(
+        &action,
+        key.as_deref(),
+        command.as_deref(),
+        &terminal_exit,
+    ) {
+        log::warn!("button={button_id} action={action} failed: {error}");
     }
 }
 

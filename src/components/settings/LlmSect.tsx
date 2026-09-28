@@ -3,6 +3,7 @@ import {
   tauriInvoke,
   type CapsProvider,
   type CapsStatus,
+  type CustomProvider,
   type ThinkingOption,
 } from "../../lib/config";
 import { PROVIDERS, findProvider } from "../../lib/providers";
@@ -38,6 +39,48 @@ function ApiKeyInput({
   );
 }
 
+interface CustomProviderValues {
+  name: string;
+  base_url: string;
+  model: string;
+  api_key: string;
+  thinking: string;
+}
+
+/// Thinking shapes a custom endpoint can declare. The capability table says
+/// nothing about user-defined endpoints, so the level list is fixed here.
+const THINKING_STYLES = [
+  { id: "", label: "不注入（服务端默认）" },
+  { id: "effort", label: "reasoning_effort（OpenAI 系）" },
+  { id: "toggle", label: "thinking.type（DeepSeek / GLM / Kimi）" },
+  { id: "enable", label: "enable_thinking（Qwen / DashScope）" },
+];
+
+/// Levels on offer once an entry declares a shape; "off" is the empty value
+/// the select already carries.
+const CUSTOM_THINKING_LEVELS: ThinkingOption[] = [
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+];
+
+/// A fresh stable key for a new entry: its name, disambiguated when that name
+/// is already taken. The key — not the name — is what api_keys and models are
+/// stored under, so a later rename never orphans them.
+///
+/// `taken` must include the built-in ids too: an entry named `openai` would
+/// otherwise satisfy `findProvider`, which answers with the preset's base url
+/// and would silently point the entry at somebody else's endpoint.
+function uniqueProviderId(name: string, taken: { id: string }[]): string {
+  const base = name.trim() || "custom";
+  let id = base;
+  let suffix = 2;
+  while (taken.some((entry) => entry.id === id)) {
+    id = `${base}-${suffix++}`;
+  }
+  return id;
+}
+
 export function LlmSect() {
   const { config, setConfig, update } = useSettingsCore();
   const [models, setModels] = useState<string[]>([]);
@@ -59,6 +102,19 @@ export function LlmSect() {
       apiKey: string,
       provider: string,
     ): Promise<string[]> => {
+      // A custom entry binds exactly one model — asking the endpoint for a
+      // list could only contradict the model the user typed when creating it.
+      const custom = config.llm.custom_providers.find(
+        (entry) => entry.id === provider,
+      );
+      if (custom) {
+        const own = config.llm.models[provider]?.trim() ?? "";
+        const list = own ? [own] : [];
+        setModels(list);
+        setModelsError(null);
+        setModelsLoading(false);
+        return list;
+      }
       if (!baseUrl.trim()) return [];
       setModelsLoading(true);
       setModelsError(null);
@@ -78,7 +134,7 @@ export function LlmSect() {
         setModelsLoading(false);
       }
     },
-    [],
+    [config.llm.custom_providers, config.llm.models],
   );
 
   // The shell only renders sections after the config finished loading, so this
@@ -98,6 +154,16 @@ export function LlmSect() {
     })
       .then((options) => {
         if (cancelled) return;
+        // A custom entry declares its own shape, so the capability table has
+        // nothing to say about it: the fixed level list applies instead and
+        // the stored level stays — it is the user's own choice to make here.
+        const custom = config.llm.custom_providers.find(
+          (entry) => entry.id === config.llm.provider,
+        );
+        if (custom) {
+          setThinkingOptions(custom.thinking ? CUSTOM_THINKING_LEVELS : null);
+          return;
+        }
         const valid = options && options.length > 0 ? options : null;
         setThinkingOptions(valid);
         if (!valid) {
@@ -114,7 +180,13 @@ export function LlmSect() {
     return () => {
       cancelled = true;
     };
-  }, [config.llm.model, config.llm.provider, capsVersion, setConfig]);
+  }, [
+    config.llm.model,
+    config.llm.provider,
+    config.llm.custom_providers,
+    capsVersion,
+    setConfig,
+  ]);
 
   useEffect(() => {
     tauriInvoke<CapsStatus>("get_caps_status")
@@ -150,7 +222,9 @@ export function LlmSect() {
   }, []);
 
   // Table first, then clay-mic's presets so ids models.dev lacks — notably
-  // Ollama — stay offered alongside the catalog.
+  // Ollama — stay offered alongside the catalog. User-defined connections come
+  // last: they are the ones no catalog can ever know about, and `api` carries
+  // their base url so selecting one fills the endpoint like a preset does.
   const providerOptions = [
     ...capsProviders,
     ...PROVIDERS.filter(
@@ -159,6 +233,11 @@ export function LlmSect() {
       id: preset.id,
       name: preset.name,
       api: preset.baseUrl,
+    })),
+    ...config.llm.custom_providers.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      api: entry.base_url,
     })),
   ];
   const knownProviderIds = new Set(providerOptions.map((option) => option.id));
@@ -226,6 +305,100 @@ export function LlmSect() {
     }));
   };
 
+  const [customDialog, setCustomDialog] = useState<{
+    mode: "add" | "edit";
+    entry?: CustomProvider;
+  } | null>(null);
+
+  // Both halves of a custom entry live together: the entry carries the name
+  // and endpoint, the model and key stay in the maps every other provider
+  // already uses — so selecting one goes through `handleProviderChange` with
+  // nothing special-cased.
+  const saveCustomProvider = (
+    values: CustomProviderValues,
+    entry?: CustomProvider,
+  ) => {
+    const name = values.name.trim();
+    const base_url = values.base_url.trim();
+    const model = values.model.trim();
+    const api_key = values.api_key.trim();
+    if (!name || !base_url) return;
+    // Built-in ids count as taken too — see `uniqueProviderId`.
+    const id =
+      entry?.id ??
+      uniqueProviderId(name, [
+        ...capsProviders,
+        ...PROVIDERS,
+        ...config.llm.custom_providers,
+      ]);
+    setConfig((prev) => {
+      const saved: CustomProvider = {
+        id,
+        name,
+        base_url,
+        thinking: values.thinking,
+      };
+      const custom_providers = entry
+        ? prev.llm.custom_providers.map((item) =>
+            item.id === id ? saved : item,
+          )
+        : [...prev.llm.custom_providers, saved];
+      const llm = {
+        ...prev.llm,
+        custom_providers,
+        models: { ...prev.llm.models, [id]: model },
+        api_keys: { ...prev.llm.api_keys, [id]: api_key },
+      };
+      // Creating selects the entry at once; editing the entry currently in
+      // use keeps the live fields in step with the dialog.
+      if (!entry || prev.llm.provider === id) {
+        llm.provider = id;
+        llm.base_url = base_url;
+        llm.model = model;
+        llm.api_key = api_key;
+      }
+      return { ...prev, llm };
+    });
+    // The entry's model list is exactly this one value, so set it directly
+    // instead of going through `loadModels`: `setConfig` only lands on the
+    // next render and that helper would still miss the entry, falling through
+    // to an endpoint fetch the entry exists to avoid.
+    setModels(model ? [model] : []);
+    setModelsError(null);
+    setCustomDialog(null);
+  };
+
+  const removeCustomProvider = (entry: CustomProvider) => {
+    setConfig((prev) => {
+      const models = { ...prev.llm.models };
+      const api_keys = { ...prev.llm.api_keys };
+      delete models[entry.id];
+      delete api_keys[entry.id];
+      const llm = {
+        ...prev.llm,
+        custom_providers: prev.llm.custom_providers.filter(
+          (item) => item.id !== entry.id,
+        ),
+        models,
+        api_keys,
+      };
+      // Deleting the entry in use falls back to the built-in default rather
+      // than leaving a dangling provider id behind, restoring whatever key
+      // and model that default had remembered.
+      if (prev.llm.provider === entry.id) {
+        llm.provider = "openai";
+        llm.base_url = findProvider("openai")?.baseUrl ?? prev.llm.base_url;
+        llm.model = models["openai"] ?? "";
+        llm.api_key = api_keys["openai"] ?? "";
+      }
+      return { ...prev, llm };
+    });
+    if (config.llm.provider === entry.id) {
+      const fallback = findProvider("openai")?.baseUrl ?? config.llm.base_url;
+      void loadModels(fallback, config.llm.api_keys["openai"] ?? "", "openai");
+    }
+  };
+
   const capsStatusText = capsStatus
     ? `${capsStatus.from_disk ? "磁盘缓存" : "内嵌"} · ${capsStatus.generated} · ${capsStatus.models} 个模型（${capsStatus.reasoning} 个会思考）`
     : "—";
@@ -265,6 +438,58 @@ export function LlmSect() {
             ))}
           </datalist>
         </Field>
+        <Field
+          label="自定义 Provider"
+          help="一条 = 一个端点 + 一个模型，选定即用，不拉取模型列表；仅支持 OpenAI Chat 兼容端点"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            {config.llm.custom_providers.length === 0 && (
+              <span className="text-[12px] text-gray-400">还没有添加</span>
+            )}
+            {config.llm.custom_providers.map((entry) => (
+              <span
+                key={entry.id}
+                className={`inline-flex items-center gap-0.5 text-[12px] border rounded-lg pl-2.5 pr-1 py-1 ${
+                  config.llm.provider === entry.id
+                    ? "border-blue-200 bg-blue-50 text-blue-700"
+                    : "border-gray-200 bg-white text-gray-600"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => commitProvider(entry.id)}
+                  title={entry.base_url}
+                  className="hover:text-blue-600 transition-colors"
+                >
+                  {entry.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCustomDialog({ mode: "edit", entry })}
+                  title="编辑"
+                  className="px-1 text-gray-400 hover:text-blue-600 transition-colors"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeCustomProvider(entry)}
+                  title="删除"
+                  className="px-1 text-gray-400 hover:text-red-600 transition-colors"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={() => setCustomDialog({ mode: "add" })}
+              className="px-2.5 py-1 text-[12px] rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+            >
+              + 添加
+            </button>
+          </div>
+        </Field>
         <Field label="Model">
           <div className="flex gap-2">
             <input
@@ -291,7 +516,11 @@ export function LlmSect() {
             disabled={!thinkingOptions}
             className="input disabled:bg-gray-50 disabled:text-gray-300"
           >
-            <option value="">关闭思考</option>
+            {/* No known switch here: claiming "关闭思考" would promise an off
+                that never reaches the wire. */}
+            <option value="">
+              {thinkingOptions ? "关闭思考" : "由服务端决定"}
+            </option>
             {thinkingOptions?.map((option) => (
               <option key={option.value} value={option.value}>思考：{option.label}</option>
             ))}
@@ -359,6 +588,136 @@ export function LlmSect() {
         </Field>
       </Group>
       </>)}
+      {customDialog && (
+        <CustomProviderDialog
+          initial={
+            customDialog.entry
+              ? {
+                  name: customDialog.entry.name,
+                  base_url: customDialog.entry.base_url,
+                  thinking: customDialog.entry.thinking,
+                  model: config.llm.models[customDialog.entry.id] ?? "",
+                  api_key: config.llm.api_keys[customDialog.entry.id] ?? "",
+                }
+              : {
+                  name: "",
+                  base_url: "",
+                  thinking: "",
+                  model: "",
+                  api_key: "",
+                }
+          }
+          editing={Boolean(customDialog.entry)}
+          onSave={(values) => saveCustomProvider(values, customDialog.entry)}
+          onClose={() => setCustomDialog(null)}
+        />
+      )}
     </SectionBox>
+  );
+}
+
+function CustomProviderDialog({
+  initial,
+  editing,
+  onSave,
+  onClose,
+}: {
+  initial: CustomProviderValues;
+  editing: boolean;
+  onSave: (values: CustomProviderValues) => void;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState<CustomProviderValues>(initial);
+  const set = (patch: Partial<CustomProviderValues>) =>
+    setValues((prev) => ({ ...prev, ...patch }));
+  const ready = values.name.trim() !== "" && values.base_url.trim() !== "";
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
+      <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-5 w-80">
+        <h3 className="text-[13px] font-semibold text-gray-800 mb-4">
+          {editing ? "编辑自定义 Provider" : "添加自定义 Provider"}
+        </h3>
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-[11px] text-gray-500">名称</span>
+            <input
+              value={values.name}
+              onChange={(e) => set({ name: e.target.value })}
+              placeholder="我的网关"
+              spellCheck={false}
+              className="input mt-1"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] text-gray-500">Base URL</span>
+            <input
+              value={values.base_url}
+              onChange={(e) => set({ base_url: e.target.value })}
+              placeholder="https://example.com/v1"
+              spellCheck={false}
+              className="input mt-1"
+            />
+            <span className="block mt-1 text-[11px] text-gray-400">
+              仅支持 OpenAI Chat 兼容端点（POST /chat/completions），不支持
+              Anthropic /v1/messages 与 OpenAI /v1/responses
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-[11px] text-gray-500">模型</span>
+            <input
+              value={values.model}
+              onChange={(e) => set({ model: e.target.value })}
+              placeholder="只填这一个会用到的"
+              spellCheck={false}
+              className="input mt-1"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] text-gray-500">API Key</span>
+            <div className="mt-1">
+              <ApiKeyInput
+                value={values.api_key}
+                onChange={(value) => set({ api_key: value })}
+              />
+            </div>
+          </label>
+          <label className="block">
+            <span className="text-[11px] text-gray-500">思考参数形态</span>
+            <select
+              value={values.thinking}
+              onChange={(e) => set({ thinking: e.target.value })}
+              className="input mt-1"
+            >
+              {THINKING_STYLES.map((style) => (
+                <option key={style.id} value={style.id}>
+                  {style.label}
+                </option>
+              ))}
+            </select>
+            <span className="block mt-1 text-[11px] text-gray-400">
+              决定开/关思考时向 body 写哪个字段；选「不注入」则由服务端默认
+            </span>
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-[12px] text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!ready}
+            onClick={() => onSave(values)}
+            className="px-3 py-1.5 text-[12px] text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
+          >
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,3 +1,15 @@
+/**
+ * A user-defined connection: one endpoint bound to exactly one model.
+ * Mirrors the Rust `CustomProvider` in `src-tauri/src/llm/provider.rs`.
+ */
+export interface CustomProvider {
+  id: string;
+  name: string;
+  base_url: string;
+  /** Which thinking field this endpoint accepts: "" | "effort" | "toggle" | "enable". */
+  thinking: string;
+}
+
 export interface Config {
   device: {
     name: string;
@@ -19,6 +31,7 @@ export interface Config {
     reasoning: string;
     api_keys: Record<string, string>;
     models: Record<string, string>;
+    custom_providers: CustomProvider[];
     timeout_secs: number;
     max_tokens: number;
   };
@@ -73,6 +86,7 @@ export const defaultConfig: Config = {
     reasoning: "",
     api_keys: {},
     models: {},
+    custom_providers: [],
     timeout_secs: 120,
     max_tokens: 8192,
   },

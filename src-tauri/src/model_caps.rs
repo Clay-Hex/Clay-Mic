@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -355,18 +355,45 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     std::fs::rename(&temp, path).map_err(|error| format!("替换文件失败：{error}"))
 }
 
+/// Shared pool for the models.dev fetch: a fresh client per refresh would
+/// pay the TLS handshake every time.
+fn client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
 async fn fetch_raw() -> Result<String, String> {
-    reqwest::Client::new()
+    let response = client()
         .get(REFRESH_URL)
         .timeout(std::time::Duration::from_secs(60))
         .send()
         .await
         .map_err(|error| format!("拉取 {REFRESH_URL} 失败：{error}"))?
         .error_for_status()
-        .map_err(|error| format!("拉取 {REFRESH_URL} 失败：{error}"))?
-        .text()
+        .map_err(|error| format!("拉取 {REFRESH_URL} 失败：{error}"))?;
+
+    // A decode failure only says "unreadable"; these headers say whether the
+    // body arrived compressed or as something other than JSON.
+    let head = response
+        .headers()
+        .iter()
+        .filter(|(name, _)| matches!(name.as_str(), "content-type" | "content-encoding"))
+        .map(|(name, value)| format!("{name}: {}", value.to_str().unwrap_or("?")))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let bytes = response
+        .bytes()
         .await
-        .map_err(|error| format!("读取响应失败：{error}"))
+        .map_err(|error| format!("读取响应失败：{error}（{head}）"))?;
+    String::from_utf8(bytes.to_vec()).map_err(|error| {
+        let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(80)]).replace('\n', " ");
+        format!(
+            "读取响应失败：{error}（{head}，{} 字节，开头：{}）",
+            bytes.len(),
+            prefix
+        )
+    })
 }
 
 /// Download models.dev, prune it, and write the disk cache the app loads from

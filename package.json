@@ -23,7 +23,7 @@
     "lint": "eslint src/",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml --workspace",
     "version:sync": "node scripts/sync-version.mjs",
-    "changelog": "git-cliff --unreleased --prepend CHANGELOG.md",
+    "changelog": "node scripts/changelog.mjs",
     "release:patch": "npm version patch",
     "release:minor": "npm version minor",
     "release:major": "npm version major",
