@@ -10,14 +10,15 @@
 pub mod buttons;
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Binding {
-    /// One of: `voice`, `ignore`, `pass`, `send`, `exec`, `clear`, `backspace`,
-    /// `inject_latest`.
+    /// Single-click action. One of: `voice`, `ignore`, `pass`, `send`, `exec`,
+    /// `clear`, `backspace`, `inject_latest`.
     pub action: String,
     /// For `send`: the target key/combo, e.g. `Enter`, `Ctrl+C`.
     #[serde(default)]
@@ -25,6 +26,16 @@ pub struct Binding {
     /// For `exec`: the command line or script path to run.
     #[serde(default)]
     pub command: Option<String>,
+    /// Long-press action, same vocabulary as `action`; `None` when the button
+    /// has no long-press behaviour and clicks answer on the press edge.
+    #[serde(default)]
+    pub long_press_action: Option<String>,
+    /// For a long-press `send`: the target key/combo.
+    #[serde(default)]
+    pub long_press_key: Option<String>,
+    /// For a long-press `exec`: the command line or script path to run.
+    #[serde(default)]
+    pub long_press_command: Option<String>,
 }
 
 impl Default for Binding {
@@ -33,6 +44,9 @@ impl Default for Binding {
             action: "ignore".to_string(),
             key: None,
             command: None,
+            long_press_action: None,
+            long_press_key: None,
+            long_press_command: None,
         }
     }
 }
@@ -45,11 +59,18 @@ pub struct KeymapConfig {
     /// `keep` / `close` / `auto`. See [`TerminalExit`].
     #[serde(default = "default_terminal_exit")]
     pub terminal_exit: String,
+    /// Hold time that separates a long press from a click, in milliseconds.
+    #[serde(default = "default_long_press_ms")]
+    pub long_press_ms: u32,
     pub bindings: BTreeMap<String, Binding>,
 }
 
 fn default_terminal_exit() -> String {
     "keep".to_string()
+}
+
+fn default_long_press_ms() -> u32 {
+    500
 }
 
 impl Default for KeymapConfig {
@@ -63,12 +84,16 @@ impl Default for KeymapConfig {
                     action: action.to_string(),
                     key: None,
                     command: None,
+                    long_press_action: None,
+                    long_press_key: None,
+                    long_press_command: None,
                 },
             );
         }
         Self {
             suppress: true,
             terminal_exit: default_terminal_exit(),
+            long_press_ms: default_long_press_ms(),
             bindings,
         }
     }
@@ -142,16 +167,33 @@ impl KeymapConfig {
     }
 
     /// Whether a button's native key should be swallowed.
+    ///
+    /// Either side counts: a click that passes through still has to be
+    /// swallowed when its long-press counterpart runs an action, because the
+    /// press edge is what starts the hold timer.
     fn swallows(&self, button: &str) -> bool {
-        matches!(
-            self.action_of(button),
-            "ignore" | "send" | "voice" | "exec" | "clear" | "backspace" | "inject_latest"
-        )
+        if is_swallowable(self.action_of(button)) {
+            return true;
+        }
+        self.bindings
+            .get(button)
+            .and_then(|binding| binding.long_press_action.as_deref())
+            .is_some_and(is_swallowable)
     }
 
     pub fn suppresses_active(&self, button: &str) -> bool {
         self.suppress && self.swallows(button)
     }
+}
+
+/// The actions [`KeymapConfig::swallows`] lets through. Every id here has to
+/// land on an arm of [`execute_action`], and the other way round — that
+/// contract is what keeps a swallowed key from firing nothing.
+fn is_swallowable(action: &str) -> bool {
+    matches!(
+        action,
+        "ignore" | "send" | "voice" | "exec" | "clear" | "backspace" | "inject_latest"
+    )
 }
 
 static CURRENT: OnceLock<Mutex<KeymapConfig>> = OnceLock::new();
@@ -181,6 +223,160 @@ pub fn binding_for(button: &str) -> (String, Option<String>, Option<String>, Str
         config.command_of(button).map(|command| command.to_string()),
         config.terminal_exit.clone(),
     )
+}
+
+/// A hold in progress: when it started, and whether the long press has already
+/// fired for it. The flag is what keeps the release edge from firing the
+/// click a long press has taken over from.
+#[derive(Debug)]
+struct Hold {
+    started: Instant,
+    long_fired: bool,
+}
+
+/// Buttons held down right now, for long-press timing.
+fn pressed() -> &'static Mutex<HashMap<String, Hold>> {
+    static PRESSED: OnceLock<Mutex<HashMap<String, Hold>>> = OnceLock::new();
+    PRESSED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A press edge older than this is a leftover from a hold whose release never
+/// arrived (device dropped mid-hold), not a hold still in progress.
+const STALE_HOLD: Duration = Duration::from_secs(10);
+
+/// Take the pending long press of a button, marking it fired so the release
+/// edge that follows stays quiet. Returns whether this call won: a release
+/// that beat the timer finds the hold gone or already claimed.
+fn claim_long_press(button: &str) -> bool {
+    let mut held = pressed().lock().unwrap();
+    match held.get_mut(button) {
+        Some(hold) if !hold.long_fired => {
+            hold.long_fired = true;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Resolve one button edge into the binding to run, or `None` when the edge
+/// carries nothing to do.
+///
+/// A button without a long press keeps its old behaviour: the press edge
+/// answers immediately and release stays silent. A button with one fires the
+/// long press the moment the hold reaches `long_press_ms` — while the button
+/// is still down, so the holder sees it happen and knows to let go — and the
+/// release edge then stays quiet. A release before the threshold fires the
+/// click instead. `voice` never resolves — the ATVV stream owns it.
+pub fn on_edge(
+    button: &str,
+    down: bool,
+) -> Option<(String, Option<String>, Option<String>, String)> {
+    let (short, long, terminal_exit, long_press_ms) = {
+        let config = store().lock().unwrap();
+        let binding = config.bindings.get(button)?;
+        let short = (
+            binding.action.clone(),
+            binding.key.clone(),
+            binding.command.clone(),
+        );
+        let long = binding.long_press_action.as_ref().map(|action| {
+            (
+                action.clone(),
+                binding.long_press_key.clone(),
+                binding.long_press_command.clone(),
+            )
+        });
+        (
+            short,
+            long,
+            config.terminal_exit.clone(),
+            config.long_press_ms,
+        )
+    };
+
+    // No long press: only the press edge resolves, exactly as before.
+    let Some(long) = long else {
+        return down
+            .then(|| {
+                let (action, key, command) = short;
+                (action, key, command, terminal_exit)
+            })
+            .filter(|(action, _, _, _)| action.as_str() != "voice");
+    };
+
+    let mut held = pressed().lock().unwrap();
+    if down {
+        let now = Instant::now();
+        // One hold can report the press edge more than once (the remote
+        // re-sends it, or a second path sees the same key). Keeping the first
+        // stamp is what stops the clock restarting on every repeat; a stamp
+        // with no release in sight belongs to an aborted hold and is replaced.
+        let repeat = held
+            .get(button)
+            .is_some_and(|hold| now.duration_since(hold.started) <= STALE_HOLD);
+        if repeat {
+            return None;
+        }
+        held.insert(
+            button.to_string(),
+            Hold {
+                started: now,
+                long_fired: false,
+            },
+        );
+
+        // The long press has to appear while the button is still held: the
+        // holder only knows to let go once its effect shows up. The timer
+        // claims it, and a release that beats the timer falls through to the
+        // click instead.
+        let delay = Duration::from_millis(u64::from(long_press_ms));
+        let button = button.to_string();
+        let (action, key, command) = long.clone();
+        let exit = terminal_exit.clone();
+        drop(held);
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            if !claim_long_press(&button) {
+                return;
+            }
+            log::info!("hold {button}: fired after {delay:?} → {action}");
+            if let Err(error) =
+                execute_action(&action, key.as_deref(), command.as_deref(), &exit)
+            {
+                log::warn!("hold {button}: long press failed: {error}");
+            }
+        });
+        return None;
+    }
+
+    // No hold means the press edge never arrived, or was already consumed by
+    // a repeat reporting the same key. Firing the click here would turn one
+    // hold into two actions, so this edge resolves to nothing at all.
+    let Some(hold) = held.remove(button) else {
+        log::warn!("hold {button}: release without a press (edge lost or reported twice)");
+        return None;
+    };
+    if hold.long_fired {
+        // The timer already showed the long press while the button was down;
+        // letting the release act too would run both halves of one gesture.
+        log::info!(
+            "hold {button}: released after {:?}, long press already fired",
+            hold.started.elapsed()
+        );
+        return None;
+    }
+    let held_for = hold.started.elapsed();
+    // The timer normally claims the hold first; a release landing right on
+    // the threshold still counts as the long press rather than a click.
+    let is_long = held_for >= Duration::from_millis(u64::from(long_press_ms));
+    log::info!(
+        "hold {button}: released after {:?} (threshold {}ms) → {}",
+        held_for,
+        long_press_ms,
+        if is_long { "long press" } else { "click" }
+    );
+    let (action, key, command) = if is_long { long } else { short };
+    (action.as_str() != "voice").then_some((action, key, command, terminal_exit))
 }
 
 /// Execute the bound action for a button press.

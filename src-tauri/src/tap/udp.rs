@@ -125,23 +125,21 @@ struct TapEvent {
 /// Dispatch one tap edge through the same keymap rules as Interception.
 fn on_tap_event(button: &str, down: bool) {
     let suppress = crate::keymap::suppresses(button);
-    let (action, key, command, terminal_exit) = crate::keymap::binding_for(button);
     if !suppress {
         // First-seen only: releases are frequent and would flood the log.
         if down {
+            let (action, ..) = crate::keymap::binding_for(button);
             log::info!(
                 "tap {button} ignored (suppress off or action={action} not swallowable)"
             );
         }
         return;
     }
-    if action == "voice" {
+    // Mirrors `process_target_stroke`: `on_edge` decides what this edge is
+    // worth, and swallows `voice` — the ATVV stream owns that one.
+    let Some((action, key, command, terminal_exit)) = crate::keymap::on_edge(button, down) else {
         return;
-    }
-    // Actions fire on the press edge only (mirrors `process_target_stroke`).
-    if !down {
-        return;
-    }
+    };
     log::info!("tap button={button} action={action} key={key:?} command={command:?}");
     if let Err(error) = crate::keymap::execute_action(
         &action,

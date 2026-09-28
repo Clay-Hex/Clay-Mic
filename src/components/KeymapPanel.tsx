@@ -5,11 +5,15 @@ interface Binding {
   action: string;
   key?: string | null;
   command?: string | null;
+  long_press_action?: string | null;
+  long_press_key?: string | null;
+  long_press_command?: string | null;
 }
 
 interface KeymapConfig {
   suppress: boolean;
   terminal_exit: string;
+  long_press_ms: number;
   bindings: Record<string, Binding>;
 }
 
@@ -85,7 +89,10 @@ export function KeymapPanel({
   registerSave?: (save: () => Promise<boolean>) => void;
 } = {}) {
   const [config, setConfig] = useState<KeymapConfig | null>(null);
-  const [recording, setRecording] = useState<string | null>(null);
+  const [recording, setRecording] = useState<{
+    button: string;
+    long: boolean;
+  } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -105,16 +112,24 @@ export function KeymapPanel({
       event.preventDefault();
       const combo = comboFromEvent(event);
       if (!combo) return;
+      const { button, long } = recording;
       setConfig((prev) =>
         prev
           ? {
               ...prev,
               bindings: {
                 ...prev.bindings,
-                [recording]: {
-                  action: "send",
-                  key: combo,
-                },
+                [button]: long
+                  ? {
+                      ...prev.bindings[button],
+                      long_press_action: "send",
+                      long_press_key: combo,
+                    }
+                  : {
+                      ...prev.bindings[button],
+                      action: "send",
+                      key: combo,
+                    },
               },
             }
           : prev,
@@ -156,19 +171,82 @@ export function KeymapPanel({
     });
   }, []);
 
+  const setLongPressAction = useCallback((button: string, action: string) => {
+    setConfig((prev) => {
+      if (!prev) return prev;
+      const previous = prev.bindings[button];
+      const binding: Binding = {
+        ...previous,
+        long_press_action: action,
+        long_press_key: action === "send" ? (previous?.long_press_key ?? null) : null,
+        long_press_command:
+          action === "exec" ? (previous?.long_press_command ?? null) : null,
+      };
+      return {
+        ...prev,
+        bindings: { ...prev.bindings, [button]: binding },
+      };
+    });
+  }, []);
+
+  const setLongPressCommand = useCallback(
+    (button: string, command: string) => {
+      setConfig((prev) => {
+        if (!prev) return prev;
+        const binding: Binding = {
+          ...(prev.bindings[button] ?? { long_press_action: "exec" }),
+          long_press_command: command,
+        };
+        return {
+          ...prev,
+          bindings: { ...prev.bindings, [button]: binding },
+        };
+      });
+    },
+    [],
+  );
+
+  const clearLongPress = useCallback((button: string) => {
+    setConfig((prev) => {
+      if (!prev) return prev;
+      const previous = prev.bindings[button];
+      if (!previous) return prev;
+      const binding: Binding = {
+        ...previous,
+        long_press_action: null,
+        long_press_key: null,
+        long_press_command: null,
+      };
+      return {
+        ...prev,
+        bindings: { ...prev.bindings, [button]: binding },
+      };
+    });
+  }, []);
+
+  const setLongPressMs = useCallback((value: number) => {
+    setConfig((prev) => (prev ? { ...prev, long_press_ms: value } : prev));
+  }, []);
+
   const setTerminalExit = useCallback((value: string) => {
     setConfig((prev) => (prev ? { ...prev, terminal_exit: value } : prev));
   }, []);
 
-  const browseScript = useCallback(async (button: string) => {
-    setError(null);
-    try {
-      const path = await tauriInvoke<string | null>("pick_script");
-      if (path) setBindingCommand(button, path);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [setBindingCommand]);
+  const browseScript = useCallback(
+    async (button: string, long: boolean) => {
+      setError(null);
+      try {
+        const path = await tauriInvoke<string | null>("pick_script");
+        if (path) {
+          if (long) setLongPressCommand(button, path);
+          else setBindingCommand(button, path);
+        }
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [setBindingCommand, setLongPressCommand],
+  );
 
   const saveConfig = useCallback(async (): Promise<boolean> => {
     if (!config) return false;
@@ -209,6 +287,120 @@ export function KeymapPanel({
     );
   }
 
+  // The action picker plus the controls whatever the chosen action needs. Both
+  // halves of a binding share one vocabulary, so a click and a long press
+  // render the same controls against their own fields.
+  const actionControls = (buttonId: string, long: boolean) => {
+    const binding = config.bindings[buttonId] ?? { action: "ignore" };
+    const stored = long ? (binding.long_press_action ?? "") : binding.action;
+    const actionValue = ACTIONS.some((option) => option.id === stored)
+      ? stored
+      : CUSTOM_ACTION_IDS.has(stored)
+        ? "custom"
+        : "ignore";
+    const isSend = stored === "send";
+    const isExec = stored === "exec";
+    const recordingHere =
+      recording?.button === buttonId && recording.long === long;
+    const applyAction = (action: string) =>
+      long ? setLongPressAction(buttonId, action) : setAction(buttonId, action);
+    const applyCommand = (command: string) =>
+      long
+        ? setLongPressCommand(buttonId, command)
+        : setBindingCommand(buttonId, command);
+    const key = long ? (binding.long_press_key ?? "") : (binding.key ?? "");
+    const command = long
+      ? (binding.long_press_command ?? "")
+      : (binding.command ?? "");
+    return (
+      <>
+        <select
+          value={actionValue}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (value === "custom") {
+              // Reveal the sub-list; bind the first custom action right away
+              // so the row shows a concrete choice the user can change (or
+              // cancel by not saving) — a pending-only state would need extra
+              // per-row UI.
+              if (!CUSTOM_ACTION_IDS.has(stored)) {
+                applyAction(CUSTOM_ACTIONS[0].id);
+              }
+              return;
+            }
+            applyAction(value);
+          }}
+          className="px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:border-blue-400"
+        >
+          {ACTIONS.map((action) => (
+            // Passing through natively means the app never sees the key, so a
+            // hold could not be timed against a click that already fired.
+            <option
+              key={action.id}
+              value={action.id}
+              disabled={action.id === "pass" && !long && Boolean(binding.long_press_action)}
+            >
+              {action.label}
+            </option>
+          ))}
+        </select>
+        {actionValue === "custom" && (
+          <select
+            value={
+              CUSTOM_ACTION_IDS.has(stored) ? stored : CUSTOM_ACTIONS[0].id
+            }
+            onChange={(e) => applyAction(e.target.value)}
+            className="px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:border-blue-400"
+          >
+            {CUSTOM_ACTIONS.map((action) => (
+              <option key={action.id} value={action.id}>
+                {action.label}
+              </option>
+            ))}
+          </select>
+        )}
+        {isSend &&
+          (recordingHere ? (
+            <>
+              <span className="px-2.5 py-1.5 text-[12px] rounded-lg font-mono bg-blue-600 text-white">
+                按下按键…
+              </span>
+              <button
+                onClick={() => setRecording(null)}
+                className="px-2.5 py-1.5 text-[12px] rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                取消
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setRecording({ button: buttonId, long })}
+              className="px-2.5 py-1.5 text-[12px] rounded-lg font-mono bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              {key || "未录制"}
+            </button>
+          ))}
+        {isExec && (
+          <>
+            <input
+              value={command}
+              onChange={(e) => applyCommand(e.target.value)}
+              placeholder="命令，或点「浏览」选脚本"
+              spellCheck={false}
+              className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:border-blue-400"
+            />
+            <button
+              onClick={() => void browseScript(buttonId, long)}
+              className="shrink-0 px-2.5 py-1.5 text-[12px] rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              浏览
+            </button>
+          </>
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="max-w-2xl space-y-5">
       {/* Exec terminal */}
@@ -232,6 +424,25 @@ export function KeymapPanel({
         </select>
       </div>
 
+      {/* Long-press threshold */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center justify-between">
+        <div className="pr-4">
+          <h3 className="text-[13px] font-semibold text-gray-800">长按阈值</h3>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            按住达到该时长立即触发长按（松手前就能看到效果）；只影响配了长按的按键
+          </p>
+        </div>
+        <input
+          type="number"
+          min={100}
+          max={3000}
+          step={50}
+          value={config.long_press_ms}
+          onChange={(e) => setLongPressMs(Number(e.target.value))}
+          className="w-24 px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:border-blue-400 shrink-0"
+        />
+      </div>
+
       {/* Bindings */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-5 py-3.5 border-b border-gray-100">
@@ -243,117 +454,63 @@ export function KeymapPanel({
         <div className="divide-y divide-gray-50">
           {BUTTONS.map((button) => {
             const binding = config.bindings[button.id] ?? { action: "ignore" };
-            const actionValue = ACTIONS.some(
-              (option) => option.id === binding.action,
-            )
-              ? binding.action
-              : CUSTOM_ACTION_IDS.has(binding.action)
-                ? "custom"
-                : "ignore";
-            const isSend = binding.action === "send";
-            const isExec = binding.action === "exec";
-            const isRecording = recording === button.id;
+            const hasLong = Boolean(binding.long_press_action);
+            // A click that passes through natively never reaches the app, so
+            // a hold could not be timed — the two stay incompatible.
+            const longAllowed = button.id !== "mic" && binding.action !== "pass";
             return (
-              <div
-                key={button.id}
-                className="px-5 py-2.5 flex items-center gap-3"
-              >
-                <span className="w-16 text-[13px] text-gray-700 shrink-0">
-                  {button.label}
-                </span>
-                {button.id === "mic" ? (
-                  <span className="px-2 py-1.5 text-[12px] text-gray-500">
-                    语音（固定）
+              <div key={button.id} className="px-5 py-2.5">
+                <div className="flex items-center gap-3">
+                  <span className="w-16 text-[13px] text-gray-700 shrink-0">
+                    {button.label}
                   </span>
-                ) : (
-                  <>
-                    <select
-                      value={actionValue}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value === "custom") {
-                          // Reveal the sub-list; bind the first custom action
-                          // right away so the row shows a concrete choice the
-                          // user can change (or cancel by not saving) — a
-                          // pending-only state would need extra per-row UI.
-                          if (!CUSTOM_ACTION_IDS.has(binding.action)) {
-                            setAction(button.id, CUSTOM_ACTIONS[0].id);
-                          }
-                          return;
-                        }
-                        setAction(button.id, value);
-                      }}
-                      className="px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:border-blue-400"
-                    >
-                      {ACTIONS.map((action) => (
-                        <option key={action.id} value={action.id}>
-                          {action.label}
-                        </option>
-                      ))}
-                    </select>
-                    {actionValue === "custom" && (
-                      <select
-                        value={
-                          CUSTOM_ACTION_IDS.has(binding.action)
-                            ? binding.action
-                            : CUSTOM_ACTIONS[0].id
-                        }
-                        onChange={(e) => setAction(button.id, e.target.value)}
-                        className="px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:border-blue-400"
-                      >
-                        {CUSTOM_ACTIONS.map((action) => (
-                          <option key={action.id} value={action.id}>
-                            {action.label}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </>
-                )}
-                {isSend &&
-                  (isRecording ? (
-                    <>
-                      <span className="px-2.5 py-1.5 text-[12px] rounded-lg font-mono bg-blue-600 text-white">
-                        按下按键…
-                      </span>
-                      <button
-                        onClick={() => setRecording(null)}
-                        className="px-2.5 py-1.5 text-[12px] rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
-                      >
-                        取消
-                      </button>
-                    </>
+                  {button.id === "mic" ? (
+                    <span className="px-2 py-1.5 text-[12px] text-gray-500">
+                      语音（固定）
+                    </span>
                   ) : (
+                    actionControls(button.id, false)
+                  )}
+                  {TAP_ONLY.has(button.id) && binding.action !== "pass" && (
+                    <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded">
+                      需 Tap
+                    </span>
+                  )}
+                  {button.id !== "mic" && !hasLong && (
                     <button
-                      onClick={() => setRecording(button.id)}
-                      className="px-2.5 py-1.5 text-[12px] rounded-lg font-mono bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
-                    >
-                      {binding.key || "未录制"}
-                    </button>
-                  ))}
-                {isExec && (
-                  <>
-                    <input
-                      value={binding.command ?? ""}
-                      onChange={(e) =>
-                        setBindingCommand(button.id, e.target.value)
+                      onClick={() =>
+                        setLongPressAction(button.id, CUSTOM_ACTIONS[0].id)
                       }
-                      placeholder="命令，或点「浏览」选脚本"
-                      spellCheck={false}
-                      className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:border-blue-400"
-                    />
-                    <button
-                      onClick={() => void browseScript(button.id)}
-                      className="shrink-0 px-2.5 py-1.5 text-[12px] rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+                      disabled={!longAllowed}
+                      title={
+                        longAllowed
+                          ? "为这个按键增加长按行为"
+                          : "放行模式收不到按键事件，无法识别长按；请先把单击改为「发送按键」"
+                      }
+                      className="shrink-0 ml-auto px-2 py-1.5 text-[12px] rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
-                      浏览
+                      + 长按
                     </button>
-                  </>
+                  )}
+                </div>
+                {hasLong && (
+                  <div className="mt-2 ml-[76px] flex flex-wrap items-center gap-3">
+                    <span className="text-[11px] text-gray-400 shrink-0">
+                      长按
+                    </span>
+                    {actionControls(button.id, true)}
+                    <button
+                      onClick={() => clearLongPress(button.id)}
+                      className="shrink-0 px-2 py-1.5 text-[12px] rounded-lg bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+                    >
+                      移除
+                    </button>
+                  </div>
                 )}
-                {TAP_ONLY.has(button.id) && binding.action !== "pass" && (
-                  <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded">
-                    需 Tap
-                  </span>
+                {hasLong && binding.action === "pass" && (
+                  <p className="mt-1.5 ml-[76px] text-[11px] text-red-500">
+                    放行模式收不到按键事件，无法识别长按；请把单击改为「发送按键」。
+                  </p>
                 )}
               </div>
             );
