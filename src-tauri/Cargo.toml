@@ -1,6 +1,6 @@
 [package]
 name = "clay-mic"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "Bluetooth remote voice input for Windows: BLE ATVV voice, local whisper.cpp transcription, and text injection."
 license = "MIT"
