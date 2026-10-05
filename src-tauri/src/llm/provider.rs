@@ -462,7 +462,10 @@ impl LlmProvider for OpenAiProvider {
                 }
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
                     let choice = &value["choices"][0];
-                    if let Some(reason) = choice["finish_reason"].as_str() {
+                    if let Some(reason) = choice["finish_reason"]
+                        .as_str()
+                        .filter(|reason| !reason.is_empty())
+                    {
                         finish_reason = Some(reason.to_string());
                     }
                     if let Some(u) = value.get("usage") {
@@ -523,7 +526,10 @@ impl LlmProvider for OpenAiProvider {
             log::info!("llm: no content tokens; parsing buffered response");
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&raw_body) {
                 let choice = &value["choices"][0];
-                if let Some(reason) = choice["finish_reason"].as_str() {
+                if let Some(reason) = choice["finish_reason"]
+                    .as_str()
+                    .filter(|reason| !reason.is_empty())
+                {
                     finish_reason = Some(reason.to_string());
                 }
                 let message = &choice["message"];
