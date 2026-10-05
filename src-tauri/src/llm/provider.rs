@@ -368,6 +368,7 @@ impl LlmProvider for OpenAiProvider {
     ) -> Result<(String, LlmUsage), String> {
         let url = format!("{}/chat/completions", self.config.base_url);
         let started = std::time::Instant::now();
+
         log::info!(
             "llm: request {} model={} chars={} prompt_chars={}",
             self.config.base_url,
@@ -376,11 +377,12 @@ impl LlmProvider for OpenAiProvider {
             prompt.chars().count()
         );
 
+        let transcript = format!("<speech_transcript>\n{text}\n</speech_transcript>");
+
         let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text}
+                {"role": "user", "content": format!("{prompt}\n\n{transcript}")}
             ],
             "temperature": 0.3,
             "max_tokens": self.config.max_tokens,
