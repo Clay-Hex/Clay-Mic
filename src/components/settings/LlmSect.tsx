@@ -9,6 +9,13 @@ import {
 import { PROVIDERS, findProvider } from "../../lib/providers";
 import { Field, Group, Message, SectionBox } from "./common";
 import { useSettingsCore } from "./context";
+import defaultPrompt from "../../../src-tauri/prompts/format-prompt.md?raw";
+
+// Mirrors `LlmConfig::default()`, which reads the same file and trims it.
+const DEFAULT_FORMAT_PROMPT = defaultPrompt.trim();
+
+const smallButton =
+  "shrink-0 px-2.5 py-1.5 text-[12px] font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 disabled:text-gray-300 disabled:bg-gray-50 transition-colors";
 
 function maskKey(key: string): string {
   const trimmed = key.trim();
@@ -583,7 +590,19 @@ export function LlmSect() {
             className="input"
           />
         </Field>
-        <Field label="格式化 Prompt">
+        <Field
+          label="格式化 Prompt"
+          action={
+            <button
+              type="button"
+              onClick={() => update("llm.format_prompt", DEFAULT_FORMAT_PROMPT)}
+              disabled={config.llm.format_prompt === DEFAULT_FORMAT_PROMPT}
+              className={smallButton}
+            >
+              恢复默认
+            </button>
+          }
+        >
           <textarea value={config.llm.format_prompt} onChange={(e) => update("llm.format_prompt", e.target.value)} rows={3} className="input resize-none" />
         </Field>
       </Group>
