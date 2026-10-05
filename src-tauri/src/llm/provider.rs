@@ -368,18 +368,21 @@ impl LlmProvider for OpenAiProvider {
     ) -> Result<(String, LlmUsage), String> {
         let url = format!("{}/chat/completions", self.config.base_url);
         let started = std::time::Instant::now();
+
         log::info!(
-            "llm: request {} model={} chars={}",
+            "llm: request {} model={} chars={} prompt_chars={}",
             self.config.base_url,
             self.config.model,
-            text.chars().count()
+            text.chars().count(),
+            prompt.chars().count()
         );
+
+        let transcript = format!("<speech_transcript>\n{text}\n</speech_transcript>");
 
         let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text}
+                {"role": "user", "content": format!("{prompt}\n\n{transcript}")}
             ],
             "temperature": 0.3,
             "max_tokens": self.config.max_tokens,
@@ -461,7 +464,10 @@ impl LlmProvider for OpenAiProvider {
                 }
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
                     let choice = &value["choices"][0];
-                    if let Some(reason) = choice["finish_reason"].as_str() {
+                    if let Some(reason) = choice["finish_reason"]
+                        .as_str()
+                        .filter(|reason| !reason.is_empty())
+                    {
                         finish_reason = Some(reason.to_string());
                     }
                     if let Some(u) = value.get("usage") {
@@ -473,7 +479,10 @@ impl LlmProvider for OpenAiProvider {
                         }
                     }
                     let delta = &choice["delta"];
-                    if let Some(reasoning) = delta["reasoning_content"].as_str() {
+                    let reasoning_delta = delta["reasoning_content"]
+                        .as_str()
+                        .or_else(|| delta["reasoning"].as_str());
+                    if let Some(reasoning) = reasoning_delta {
                         if !reasoning.is_empty() {
                             if first_reasoning {
                                 first_reasoning = false;
@@ -519,10 +528,22 @@ impl LlmProvider for OpenAiProvider {
             log::info!("llm: no content tokens; parsing buffered response");
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&raw_body) {
                 let choice = &value["choices"][0];
-                if let Some(reason) = choice["finish_reason"].as_str() {
+                if let Some(reason) = choice["finish_reason"]
+                    .as_str()
+                    .filter(|reason| !reason.is_empty())
+                {
                     finish_reason = Some(reason.to_string());
                 }
-                if let Some(content) = choice["message"]["content"].as_str() {
+                let message = &choice["message"];
+                let reasoning_message = message["reasoning_content"]
+                    .as_str()
+                    .or_else(|| message["reasoning"].as_str());
+                if let Some(reasoning) = reasoning_message {
+                    if !reasoning.is_empty() {
+                        on_event(LlmDelta::Reasoning(reasoning.to_string()));
+                    }
+                }
+                if let Some(content) = message["content"].as_str() {
                     if !content.is_empty() {
                         let text = content.to_string();
                         full.push_str(&text);
