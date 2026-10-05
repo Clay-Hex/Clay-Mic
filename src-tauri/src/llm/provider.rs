@@ -474,7 +474,10 @@ impl LlmProvider for OpenAiProvider {
                         }
                     }
                     let delta = &choice["delta"];
-                    if let Some(reasoning) = delta["reasoning_content"].as_str() {
+                    let reasoning_delta = delta["reasoning_content"]
+                        .as_str()
+                        .or_else(|| delta["reasoning"].as_str());
+                    if let Some(reasoning) = reasoning_delta {
                         if !reasoning.is_empty() {
                             if first_reasoning {
                                 first_reasoning = false;
@@ -523,7 +526,16 @@ impl LlmProvider for OpenAiProvider {
                 if let Some(reason) = choice["finish_reason"].as_str() {
                     finish_reason = Some(reason.to_string());
                 }
-                if let Some(content) = choice["message"]["content"].as_str() {
+                let message = &choice["message"];
+                let reasoning_message = message["reasoning_content"]
+                    .as_str()
+                    .or_else(|| message["reasoning"].as_str());
+                if let Some(reasoning) = reasoning_message {
+                    if !reasoning.is_empty() {
+                        on_event(LlmDelta::Reasoning(reasoning.to_string()));
+                    }
+                }
+                if let Some(content) = message["content"].as_str() {
                     if !content.is_empty() {
                         let text = content.to_string();
                         full.push_str(&text);
