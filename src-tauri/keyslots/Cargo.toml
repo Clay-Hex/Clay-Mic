@@ -1,6 +1,6 @@
 [package]
 name = "clay-mic-keyslots"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "Folds Windows' keyboard/mouse device numbering back into the single-digit range the Interception driver can parse."
 license = "MIT"
