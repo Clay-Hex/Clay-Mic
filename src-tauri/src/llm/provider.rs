@@ -369,10 +369,11 @@ impl LlmProvider for OpenAiProvider {
         let url = format!("{}/chat/completions", self.config.base_url);
         let started = std::time::Instant::now();
         log::info!(
-            "llm: request {} model={} chars={}",
+            "llm: request {} model={} chars={} prompt_chars={}",
             self.config.base_url,
             self.config.model,
-            text.chars().count()
+            text.chars().count(),
+            prompt.chars().count()
         );
 
         let mut body = serde_json::json!({
