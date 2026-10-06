@@ -54,11 +54,17 @@ fn emit_state(state: &'static str, message: Option<String>) {
     // A finishing utterance must not override the state of one that is still
     // recording — the indicator should keep showing "recording".
     if state != "recording" && RECORDING.load(Ordering::SeqCst) {
+        log::info!("emit_state({state}) dropped: still recording");
         return;
     }
     crate::runtime::emit("voice://state", VoiceState { state, message });
-    if let Some(app) = crate::runtime::handle() {
-        crate::overlay::window::set_indicator_visible(app, !matches!(state, "idle" | "error"));
+    match crate::runtime::handle() {
+        Some(app) => {
+            let visible = !matches!(state, "idle" | "error");
+            crate::overlay::window::set_indicator_visible(app, visible);
+            log::info!("emit_state({state}) -> indicator visible={visible}");
+        }
+        None => log::warn!("emit_state({state}) -> no app handle, indicator untouched"),
     }
 }
 
@@ -184,7 +190,11 @@ fn run_listener(audio: Receiver<Vec<u8>>, control: Receiver<Vec<u8>>, caps: Atvv
                         emit_partial(String::new());
                         emit_state("recording", None);
                     } else {
-                        log::debug!("atvv: dropping audio outside an active stream");
+                        log::info!(
+                            "atvv: dropping audio (last_stop={}, suppression={})",
+                            last_stop.is_some(),
+                            suppression_active(),
+                        );
                     }
                 }
                 if let Some(active) = session.as_mut() {
