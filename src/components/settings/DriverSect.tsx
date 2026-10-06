@@ -32,6 +32,7 @@ export function DriverSect({
   const [tapMessage, setTapMessage] = useState<string | null>(null);
   const [tapBusy, setTapBusy] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
+  const [confirmKillHost, setConfirmKillHost] = useState(false);
 
   const refresh = useCallback(() => {
     tauriInvoke<DriverStatus>("get_interception_status")
@@ -73,6 +74,24 @@ export function DriverSect({
       try {
         await action();
         setTapMessage(`${label}完成`);
+        refresh();
+      } catch (error) {
+        setTapMessage(`${label}失败：${String(error)}`);
+        refresh();
+      } finally {
+        setTapBusy(false);
+        onProgressEnd();
+      }
+    },
+    [refresh, onProgressEnd],
+  );
+
+  const runTapResult = useCallback(
+    async (label: string, action: () => Promise<string>) => {
+      setTapBusy(true);
+      setTapMessage(null);
+      try {
+        setTapMessage(await action());
         refresh();
       } catch (error) {
         setTapMessage(`${label}失败：${String(error)}`);
@@ -361,6 +380,13 @@ export function DriverSect({
             >
               移除
             </button>
+            <button
+              onClick={() => setConfirmKillHost(true)}
+              disabled={tapBusy}
+              className={grayButton}
+            >
+              结束 WUDFHost 进程
+            </button>
           </div>
           {tapMessage && <Message>{tapMessage}</Message>}
           {tap?.last_error && <Message tone="warn">{tap.last_error}</Message>}
@@ -379,6 +405,59 @@ export function DriverSect({
           }}
         />
       )}
+      {confirmKillHost && (
+        <KillHostConfirmDialog
+          onCancel={() => setConfirmKillHost(false)}
+          onConfirm={() => {
+            setConfirmKillHost(false);
+            void runTapResult("结束 WUDFHost", () =>
+              tauriInvoke<string>("kill_wudfhost"),
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function KillHostConfirmDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
+      <div
+        className="bg-white rounded-xl shadow-lg border border-gray-200 p-5 w-96"
+      >
+        <p className="text-sm font-semibold text-gray-800 mb-2">
+          结束 WUDFHost 进程？
+        </p>
+        <p className="text-[12px] text-gray-500 leading-relaxed mb-4">
+          将结束遥控器对应的 WUDFHost.exe 进程（需一次管理员授权）。
+          Windows 正常情况下会自动重启它，遥控器会短暂断开后重新连接。
+        </p>
+        <p className="text-[12px] text-amber-600 leading-relaxed mb-4">
+          注入的组件随该进程一并失效，需要重新「注入」才能恢复返回 / 音量±
+          的拦截。当前进行中的语音识别会中断。
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-[12px] text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-3 py-1.5 text-[12px] text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+          >
+            结束进程
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

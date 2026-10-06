@@ -140,6 +140,7 @@ pub fn run() {
             commands::get_tap_status,
             commands::inject_tap,
             commands::remove_tap,
+            commands::kill_wudfhost,
         ])
         .on_window_event(|window, event| {
             match window.label() {
@@ -537,6 +538,14 @@ mod commands {
     #[tauri::command]
     pub async fn remove_tap() -> Result<(), String> {
         tauri::async_runtime::spawn_blocking(crate::tap::remove_command)
+            .await
+            .map_err(|error| error.to_string())?
+    }
+
+    /// End the WUDFHost hosting the remote (may prompt UAC).
+    #[tauri::command]
+    pub async fn kill_wudfhost() -> Result<String, String> {
+        tauri::async_runtime::spawn_blocking(crate::tap::kill_wudfhost_command)
             .await
             .map_err(|error| error.to_string())?
     }

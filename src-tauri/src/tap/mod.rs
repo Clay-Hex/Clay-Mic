@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use host::{clear_marker_pid, find_host_pid, read_marker_pid,
+use host::{clear_marker_pid, find_host_pid, pid_is_wudfhost, read_marker_pid,
     resolve_injected_pid, write_marker_pid,
 };
 use process::{eject_dll_from, inject_dll_into};
@@ -428,6 +428,39 @@ pub fn remove_command() -> Result<(), String> {
             Err(error)
         }
     }
+}
+
+/// End the WUDFHost that hosts the configured remote (needs elevation).
+#[cfg(target_os = "windows")]
+pub fn kill_wudfhost_command() -> Result<String, String> {
+    let pid = find_host_pid()?.ok_or("未找到遥控器对应的 WUDFHost（请先连接设备）")?;
+    log::info!("kill_wudfhost: ending pid={pid}");
+
+    let script = format!(
+        "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue\n\
+         if ($null -eq $p) {{ throw '进程已不存在' }}\n\
+         if ($p.ProcessName -ne 'WUDFHost') {{ throw ('PID {pid} 不是 WUDFHost，而是 ' + $p.ProcessName) }}\n\
+         Stop-Process -Id {pid} -Force\n\
+         Start-Sleep -Milliseconds 300"
+    );
+    crate::keyslots::run_elevated(&script, "kill-wudfhost")?;
+
+    let gone = !pid_is_wudfhost(pid);
+    log::info!("kill_wudfhost: pid={pid} still_wudfhost={gone}");
+    clear_marker_pid();
+    ACCEPTING.store(0, Ordering::SeqCst);
+    emit_status();
+
+    Ok(if gone {
+        format!("已结束 WUDFHost 进程（PID {pid}）；Windows 会自动重启它，注入已随之失效")
+    } else {
+        format!("已请求结束 PID {pid}，但它仍在运行；请重试或以管理员身份手动结束")
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn kill_wudfhost_command() -> Result<String, String> {
+    Err("仅支持 Windows".into())
 }
 
 /// Called from `apply_suppression(true)` on a background thread.
