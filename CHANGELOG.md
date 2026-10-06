@@ -5,6 +5,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1] - 2026-10-05
+
+### 修复
+
+- LLM 日志补充 prompt 长度
+- 兼容思考内容的 reasoning 字段名
+- 忽略流式响应中的空 finish_reason
+- Prompt 与转写合并为单条消息并加定界符
+
+### 新增
+
+- 格式化 Prompt 增加恢复默认按钮
 ## [1.1.0] - 2026-09-28
 
 ### 修复

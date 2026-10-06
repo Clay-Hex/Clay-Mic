@@ -1,7 +1,7 @@
 {
   "name": "clay-mic",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "license": "MIT",
   "description": "Bluetooth remote voice input for Windows: BLE ATVV voice, local whisper.cpp transcription, and text injection.",
   "type": "module",
