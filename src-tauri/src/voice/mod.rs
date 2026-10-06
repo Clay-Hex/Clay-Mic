@@ -141,15 +141,8 @@ fn run_listener(audio: Receiver<Vec<u8>>, control: Receiver<Vec<u8>>, caps: Atvv
                 }
                 OP_STREAM_STOP => {
                     log::info!("atvv: stream stop");
-                    if let Some(active) = session.take() {
-                        last_stop = Some(Instant::now());
-                        RECORDING.store(false, Ordering::SeqCst);
-                        PARTIAL_EPOCH.fetch_add(1, Ordering::SeqCst);
-                        emit_partial(String::new());
-                        // Transcribe off-thread so the listener keeps draining
-                        // the channels for the next utterance.
-                        std::thread::spawn(move || finalize(active));
-                    }
+                    last_stop = Some(Instant::now());
+                    end_session(&mut session);
                 }
                 OP_AUDIO_SYNC => {
                     if let Some(active) = session.as_mut() {
@@ -204,6 +197,7 @@ fn run_listener(audio: Receiver<Vec<u8>>, control: Receiver<Vec<u8>>, caps: Atvv
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 log::warn!("atvv: audio channel closed; voice listener exiting");
+                end_session(&mut session);
                 return;
             }
         }
@@ -223,14 +217,32 @@ fn run_listener(audio: Receiver<Vec<u8>>, control: Receiver<Vec<u8>>, caps: Atvv
             .unwrap_or(false)
         {
             log::warn!("atvv: session exceeded {MAX_SESSION:?}; finalizing");
-            if let Some(active) = session.take() {
-                RECORDING.store(false, Ordering::SeqCst);
-                // Transcribe off-thread so the listener keeps draining the
-                // channels while the capped session is processed.
-                std::thread::spawn(move || finalize(active));
-            }
+            end_session(&mut session);
         }
     }
+}
+
+/// Shut the current session down exactly as a `STREAM_STOP` would.
+///
+/// `session` may already be gone — the listener holding it can die first — in
+/// which case there is nothing to transcribe, but `RECORDING` still has to be
+/// released: `emit_state` drops every `idle` while it is set, so a leak here is
+/// what keeps the indicator on for good.
+fn end_session(session: &mut Option<ActiveSession>) {
+    let Some(active) = session.take() else {
+        if RECORDING.swap(false, Ordering::SeqCst)
+            && FINALIZING.load(Ordering::SeqCst) == 0
+        {
+            emit_state("idle", None);
+        }
+        return;
+    };
+    RECORDING.store(false, Ordering::SeqCst);
+    PARTIAL_EPOCH.fetch_add(1, Ordering::SeqCst);
+    emit_partial(String::new());
+    // Transcribe off-thread so the listener keeps draining the channels for the
+    // next utterance.
+    std::thread::spawn(move || finalize(active));
 }
 
 fn streaming_enabled() -> bool {
