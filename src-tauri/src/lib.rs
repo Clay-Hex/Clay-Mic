@@ -2,6 +2,7 @@ pub mod audio;
 pub mod ble;
 pub mod config;
 pub mod db;
+pub mod device_events;
 pub mod download;
 pub mod tap;
 pub mod hid;
