@@ -120,6 +120,14 @@ pub(super) fn injected_in_host(host_pid: Option<u32>) -> bool {
     host_pid.is_some_and(hook_healthy_for)
 }
 
+/// Whether a hook was injected before (a marker exists). Startup uses this —
+/// not `injected` — to decide whether to bring the UDP server up: `injected`
+/// is derived from a heartbeat that needs that very server, so gating on it
+/// would deadlock the resident-hook case.
+pub fn marker_present() -> bool {
+    read_marker_pid().is_some()
+}
+
 fn lock_inject() -> std::sync::MutexGuard<'static, ()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {

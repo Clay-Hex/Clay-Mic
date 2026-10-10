@@ -95,10 +95,11 @@ pub fn run() {
                         log::warn!("restore suppression on launch failed: {}", error);
                     }
                 });
-            } else if crate::tap::status().injected {
-                // Resident hook DLL from last session: accept reconnects even
-                // without suppression so status does not stick at a false
-                // "not connected" after restart.
+            } else if crate::tap::marker_present() {
+                // Resident hook DLL from last session: bring the UDP server up
+                // so its heartbeat can mark it connected. This keys off the
+                // marker — `injected` is derived from that heartbeat and would
+                // never be true before the server runs.
                 std::thread::spawn(crate::tap::ensure_server_public);
             }
             Ok(())

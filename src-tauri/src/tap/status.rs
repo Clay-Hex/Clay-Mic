@@ -73,7 +73,8 @@ pub fn refresh_status_async() {
     let fresh = status();
     // Marker from a previous session: bring UDP up so the resident hook's
     // heartbeat can mark the channel live without waiting for suppression.
-    if fresh.injected && !fresh.listening && read_marker_pid().is_some() {
+    // Gate on the marker, not `injected`: `injected` needs that heartbeat.
+    if !fresh.listening && read_marker_pid().is_some() {
         let _ = ensure_server();
     }
     let fresh = status();
