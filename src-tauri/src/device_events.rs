@@ -7,9 +7,6 @@
 //! Registration goes through `CM_Register_Notification`, whose callbacks are
 //! delivered on the registering thread — hence the message loop at the bottom.
 
-/// Ask the HID capture loop to re-evaluate its binding on its next iteration.
-pub use crate::hid::request_reconcile;
-
 #[cfg(target_os = "windows")]
 pub fn start() {
     use std::sync::OnceLock;

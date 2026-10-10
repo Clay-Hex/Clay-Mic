@@ -55,6 +55,8 @@ pub mod platform {
         /// Must keep these alive or notifications stop
         _audio_token: i64,
         _control_token: i64,
+        /// Keeps the link-status handler registered, for auto-reconnect.
+        _conn_token: i64,
     }
 
     fn block_on<T, O>(op: windows::core::Result<O>) -> Result<T, String>
@@ -266,6 +268,27 @@ pub mod platform {
         }
     }
 
+    /// Watch the link status so a dropped BLE link is noticed without polling.
+    /// The returned token must be kept (stored in the device struct) for the
+    /// handler to stay registered.
+    fn subscribe_connection_status(device: &BluetoothLEDevice, address: &str) -> i64 {
+        use windows::core::IInspectable;
+        let address = address.to_string();
+        let handler = TypedEventHandler::<BluetoothLEDevice, IInspectable>::new(
+            move |_sender, _args| {
+                crate::ble::scanner::on_connection_status_changed(&address);
+                Ok(())
+            },
+        );
+        match device.ConnectionStatusChanged(&handler) {
+            Ok(token) => token,
+            Err(error) => {
+                log::warn!("ble: subscribe ConnectionStatusChanged failed: {error}");
+                0
+            }
+        }
+    }
+
     /// Connect to a paired BLE device by its Windows device ID.
     /// The device_id is like: "BTHLE\\DEV_14BEFCF3D837\\..."
     pub fn connect_by_id(device_id: &str) -> Result<WinRtBleDevice, String> {
@@ -308,6 +331,7 @@ pub mod platform {
         std::mem::forget(_apartment);
 
         let identity = read_device_identity(&device);
+        let conn_token = subscribe_connection_status(&device, device_id);
 
         Ok(WinRtBleDevice {
             device, name,
@@ -319,6 +343,7 @@ pub mod platform {
             audio_rx: Some(audio_rx), control_rx: Some(control_rx),
             _rx_char: rx, _control_char: ctrl,
             _audio_token, _control_token,
+            _conn_token: conn_token,
         })
     }
 
@@ -359,6 +384,7 @@ pub mod platform {
         std::mem::forget(_apartment);
 
         let identity = read_device_identity(&device);
+        let conn_token = subscribe_connection_status(&device, address);
 
         Ok(WinRtBleDevice {
             device, name,
@@ -370,6 +396,7 @@ pub mod platform {
             audio_rx: Some(audio_rx), control_rx: Some(control_rx),
             _rx_char: rx, _control_char: ctrl,
             _audio_token, _control_token,
+            _conn_token: conn_token,
         })
     }
 
@@ -473,11 +500,33 @@ pub fn list_paired_devices() -> Result<Vec<BleDeviceInfo>, String> {
 static SESSION: std::sync::Mutex<Option<platform::WinRtBleDevice>> =
     std::sync::Mutex::new(None);
 
+/// Address of the remote whose link we keep alive, so a dropped link can be
+/// restored without the user reconnecting.
+#[cfg(target_os = "windows")]
+static LAST_ADDRESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Set while a reconnect attempt loop runs, so repeated link-dropped events
+/// coalesce into one loop.
+#[cfg(target_os = "windows")]
+static RECONNECTING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Serializes connect attempts (the UI command and the reconnect loop).
+#[cfg(target_os = "windows")]
+static CONNECT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Connect to the remote, keep the session alive, and hand the audio/control
 /// channels to the voice session listener.
 pub fn connect_and_store(address: &str) -> Result<BleDevice, String> {
     #[cfg(target_os = "windows")]
     {
+        // Serialize with the reconnect loop so two connects cannot race on the
+        // shared session.
+        let _guard = CONNECT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Remember the target so a dropped link can be restored.
+        *LAST_ADDRESS.lock().unwrap() = Some(address.to_string());
         // Release any previous connection first so its GATT link cannot
         // interfere with the new service/characteristic discovery.
         *SESSION.lock().unwrap() = None;
@@ -535,6 +584,83 @@ pub fn disconnect() {
     #[cfg(target_os = "windows")]
     {
         *SESSION.lock().unwrap() = None;
+    }
+}
+
+/// A BLE link-status change arrived. Only act when the link actually dropped —
+/// a change to Connected is left alone.
+#[cfg(target_os = "windows")]
+pub fn on_connection_status_changed(address: &str) {
+    if !link_dropped() {
+        return;
+    }
+    if LAST_ADDRESS.lock().unwrap().as_deref() != Some(address) {
+        return;
+    }
+    log::info!("ble: link to {address} dropped; reconnecting");
+    spawn_reconnect(address.to_string());
+}
+
+/// Whether the session's BLE link currently reads as disconnected.
+#[cfg(target_os = "windows")]
+fn link_dropped() -> bool {
+    use windows::Devices::Bluetooth::BluetoothConnectionStatus;
+    let Ok(guard) = SESSION.lock() else {
+        return false;
+    };
+    guard
+        .as_ref()
+        .and_then(|device| device.device.ConnectionStatus().ok())
+        .is_some_and(|status| status == BluetoothConnectionStatus::Disconnected)
+}
+
+/// Start a reconnect loop unless one is already running.
+#[cfg(target_os = "windows")]
+fn spawn_reconnect(address: String) {
+    use std::sync::atomic::Ordering;
+    if RECONNECTING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let result = reconnect_loop(&address);
+        RECONNECTING.store(false, Ordering::SeqCst);
+        match result {
+            Ok(()) => log::info!("ble: reconnected to {address}"),
+            Err(error) => log::warn!("ble: reconnect to {address} stopped: {error}"),
+        }
+    });
+}
+
+/// Retry the connection with a growing backoff until it succeeds or another
+/// connection replaces this one. One loop runs at a time.
+#[cfg(target_os = "windows")]
+fn reconnect_loop(address: &str) -> Result<(), String> {
+    use std::time::Duration;
+    let mut attempt = 0u32;
+    loop {
+        let delay = match attempt {
+            0 => 1,
+            1 => 2,
+            2 => 4,
+            3 => 8,
+            _ => 15,
+        };
+        std::thread::sleep(Duration::from_secs(delay));
+        if LAST_ADDRESS.lock().unwrap().as_deref() != Some(address) {
+            return Err("superseded by another connection".into());
+        }
+        match connect_and_store(address) {
+            Ok(device) => {
+                log::info!(
+                    "ble: reconnect succeeded ({} · {:?})",
+                    device.name,
+                    device.model
+                );
+                return Ok(());
+            }
+            Err(error) => log::info!("ble: reconnect attempt {attempt} failed: {error}"),
+        }
+        attempt = attempt.saturating_add(1);
     }
 }
 
