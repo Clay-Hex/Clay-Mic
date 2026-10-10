@@ -520,6 +520,22 @@ static LAST_ADDRESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(No
 static RECONNECTING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Set while a session is being (re)built, so a link event from the device
+/// being torn down is not mistaken for the current session dropping.
+#[cfg(target_os = "windows")]
+static CONNECTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Clears `CONNECTING` however `connect_session` exits.
+#[cfg(target_os = "windows")]
+struct ConnectingGuard;
+
+#[cfg(target_os = "windows")]
+impl Drop for ConnectingGuard {
+    fn drop(&mut self) {
+        CONNECTING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Serializes connect attempts (the UI command and the reconnect loop).
 #[cfg(target_os = "windows")]
 static CONNECT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -552,8 +568,12 @@ fn connect_session(address: &str) -> Result<BleDevice, String> {
         let _guard = CONNECT_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Remember the target so a dropped link can be restored.
-        *LAST_ADDRESS.lock().unwrap() = Some(address.to_string());
+        // While the session is rebuilt, ignore link events: dropping the old
+        // device can surface a Disconnected event, and no address is matched
+        // until the new session is actually established.
+        CONNECTING.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _connecting = ConnectingGuard;
+        *LAST_ADDRESS.lock().unwrap() = None;
         // Release any previous connection first so its GATT link cannot
         // interfere with the new service/characteristic discovery.
         *SESSION.lock().unwrap() = None;
@@ -585,6 +605,8 @@ fn connect_session(address: &str) -> Result<BleDevice, String> {
         if let (Some(audio), Some(control)) = (audio_rx, control_rx) {
             crate::voice::start_session(audio, control, caps);
         }
+        // Arm link matching for the session we just established.
+        *LAST_ADDRESS.lock().unwrap() = Some(address.to_string());
         Ok(info)
     }
     #[cfg(not(target_os = "windows"))]
@@ -622,6 +644,11 @@ pub fn disconnect() {
 /// it when another connection has since taken over.
 #[cfg(target_os = "windows")]
 pub fn on_link_dropped(address: &str) {
+    use std::sync::atomic::Ordering;
+    // A rebuild in progress handles its own teardown; ignore its events.
+    if CONNECTING.load(Ordering::SeqCst) {
+        return;
+    }
     if LAST_ADDRESS.lock().unwrap().as_deref() != Some(address) {
         return;
     }
