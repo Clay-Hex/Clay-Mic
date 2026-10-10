@@ -8,6 +8,7 @@
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Mutex;
 
 // ===========================================================================
 // Wire format exchanged with the driver
@@ -53,6 +54,10 @@ type DeviceSelector = unsafe extern "C" fn(i32) -> i32;
 
 /// Device the pending [`Driver::set_key_filter`] call wants to target.
 static FILTER_DEVICE: AtomicI32 = AtomicI32::new(0);
+
+/// Serializes the [store `FILTER_DEVICE` → call `interception_set_filter`] pair
+/// so two threads cannot interleave and install a filter on the wrong device.
+static FILTER_LOCK: Mutex<()> = Mutex::new(());
 
 unsafe extern "C" fn only_filtered_device(device: i32) -> i32 {
     i32::from(device == FILTER_DEVICE.load(Ordering::Relaxed))
@@ -146,6 +151,7 @@ impl Driver {
     /// `only_filtered_device`, which answers for `device` alone; the predicate
     /// must therefore be a genuine function pointer.
     pub fn set_key_filter(&self, context: Context, device: i32, mask: u16) {
+        let _guard = FILTER_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         FILTER_DEVICE.store(device, Ordering::Relaxed);
         unsafe { (self.exports.set_key_filter)(context, only_filtered_device, mask) }
     }
