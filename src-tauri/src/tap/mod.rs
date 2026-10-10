@@ -16,7 +16,7 @@
 
 use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use host::{clear_marker_pid, find_host_pid, pid_is_wudfhost, read_marker_pid,
@@ -72,6 +72,11 @@ static WAS_CONNECTED: AtomicU32 = AtomicU32::new(0);
 /// When 0 (after remove), packets are ignored so a resident hook DLL cannot
 /// look connected. Starts at 1 so a leftover marker can heartbeat again.
 static ACCEPTING: AtomicU32 = AtomicU32::new(1);
+/// Whether the hook is wanted (default) or the user deliberately dropped it
+/// (`移除` / `结束 WUDFHost`). Kept separate from `ACCEPTING`, which only
+/// governs whether UDP packets are trusted, so an unrelated path clearing
+/// `ACCEPTING` can never silently switch unattended self-heal off.
+static HOOK_WANTED: AtomicBool = AtomicBool::new(true);
 /// Serializes ensure_server / stop_server so two threads cannot race.
 static SERVER_LOCK: Mutex<()> = Mutex::new(());
 /// UDP recv-thread handle; joined in stop_server so the port is free.
@@ -363,6 +368,7 @@ fn read_status_file_ok() -> bool {
 /// Record a verified inject: marker + status push.
 fn mark_injected(pid: u32) {
     ACCEPTING.store(1, Ordering::SeqCst);
+    HOOK_WANTED.store(true, Ordering::SeqCst);
     write_marker_pid(pid);
     clear_error();
     emit_status();
@@ -516,6 +522,7 @@ pub fn remove_command() -> Result<(), String> {
     match eject_result {
         Ok(()) => {
             ACCEPTING.store(0, Ordering::SeqCst);
+            HOOK_WANTED.store(false, Ordering::SeqCst);
             stop_server();
             clear_marker_pid();
             clear_error();
@@ -553,6 +560,10 @@ pub fn kill_wudfhost_command() -> Result<String, String> {
     log::info!("kill_wudfhost: pid={pid} still_wudfhost={gone}");
     clear_marker_pid();
     ACCEPTING.store(0, Ordering::SeqCst);
+    // Ending the host is a deliberate reset: its hook is gone until the user
+    // re-injects (as the dialog says), so unattended self-heal must not revive
+    // it. This is the explicit "not wanted" signal, independent of ACCEPTING.
+    HOOK_WANTED.store(false, Ordering::SeqCst);
     emit_status();
 
     Ok(if gone {
@@ -582,9 +593,9 @@ pub fn try_reinject_if_ready() {
 fn run_inject(allow_elevation: bool) {
     if !allow_elevation {
         // Unattended self-heal runs only while the user actually wants
-        // suppression and has not explicitly removed the hook. This covers
+        // suppression and has not deliberately dropped the hook. This covers
         // every silent caller (heartbeat loss, BLE reconnect).
-        if ACCEPTING.load(Ordering::SeqCst) != 1 || !crate::keymap::snapshot().suppress {
+        if !HOOK_WANTED.load(Ordering::SeqCst) || !crate::keymap::snapshot().suppress {
             return;
         }
     }
