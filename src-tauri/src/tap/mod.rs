@@ -158,7 +158,9 @@ pub struct TapStatus {
     pub dll_ready: bool,
     pub host_pid: Option<u32>,
     pub host_alive: bool,
-    /// Marker file matches a live WUDFHost (or this session injected it).
+    /// A live hook is proven in the current WUDFHost: a fresh heartbeat that
+    /// names it. (`tap::marker_present` is the marker-based signal, kept
+    /// separate for the startup server gate.)
     pub injected: bool,
     /// UDP recv thread is running.
     pub listening: bool,
