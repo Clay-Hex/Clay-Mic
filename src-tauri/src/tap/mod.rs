@@ -113,13 +113,11 @@ fn wait_hook_heartbeat(host_pid: u32, timeout: std::time::Duration) -> bool {
     false
 }
 
-/// Whether a verified hook for the current host is in place: a fresh heartbeat
-/// from it, or a marker naming exactly that host (grace before the first beat).
+/// Whether a live hook is proven for the current host: a fresh heartbeat that
+/// names it. The marker is deliberately NOT consulted here — a pooled WUDFHost
+/// can carry a stale marker and would then show a false "injected".
 pub(super) fn injected_in_host(host_pid: Option<u32>) -> bool {
-    let Some(host) = host_pid else {
-        return false;
-    };
-    hook_healthy_for(host) || read_marker_pid() == Some(host)
+    host_pid.is_some_and(hook_healthy_for)
 }
 
 fn lock_inject() -> std::sync::MutexGuard<'static, ()> {
