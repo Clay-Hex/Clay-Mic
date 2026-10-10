@@ -127,6 +127,10 @@ pub struct Driver {
 unsafe impl Send for Driver {}
 unsafe impl Sync for Driver {}
 
+// Every method takes the opaque `Context` handle (a raw pointer) this module
+// itself created; the contract is internal, so the raw-pointer lint is not
+// meaningful here.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl Driver {
     /// Open the DLL from the first usable location and resolve its exports.
     pub fn open() -> Result<Self, String> {
