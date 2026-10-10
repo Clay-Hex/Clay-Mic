@@ -273,10 +273,19 @@ pub mod platform {
     /// handler to stay registered.
     fn subscribe_connection_status(device: &BluetoothLEDevice, address: &str) -> i64 {
         use windows::core::IInspectable;
+        use windows::Devices::Bluetooth::BluetoothConnectionStatus;
         let address = address.to_string();
         let handler = TypedEventHandler::<BluetoothLEDevice, IInspectable>::new(
-            move |_sender, _args| {
-                crate::ble::scanner::on_connection_status_changed(&address);
+            move |sender, _args| {
+                // Read the status off the device that raised the event, not a
+                // shared session that may already have moved on.
+                let dropped = sender
+                    .as_ref()
+                    .and_then(|device| device.ConnectionStatus().ok())
+                    .is_some_and(|status| status == BluetoothConnectionStatus::Disconnected);
+                if dropped {
+                    crate::ble::scanner::on_link_dropped(&address);
+                }
                 Ok(())
             },
         );
@@ -609,31 +618,15 @@ pub fn disconnect() {
     }
 }
 
-/// A BLE link-status change arrived. Only act when the link actually dropped —
-/// a change to Connected is left alone.
+/// The link to `address` was reported dropped by its own device event. Ignore
+/// it when another connection has since taken over.
 #[cfg(target_os = "windows")]
-pub fn on_connection_status_changed(address: &str) {
-    if !link_dropped() {
-        return;
-    }
+pub fn on_link_dropped(address: &str) {
     if LAST_ADDRESS.lock().unwrap().as_deref() != Some(address) {
         return;
     }
     log::info!("ble: link to {address} dropped; reconnecting");
     spawn_reconnect(address.to_string());
-}
-
-/// Whether the session's BLE link currently reads as disconnected.
-#[cfg(target_os = "windows")]
-fn link_dropped() -> bool {
-    use windows::Devices::Bluetooth::BluetoothConnectionStatus;
-    let Ok(guard) = SESSION.lock() else {
-        return false;
-    };
-    guard
-        .as_ref()
-        .and_then(|device| device.device.ConnectionStatus().ok())
-        .is_some_and(|status| status == BluetoothConnectionStatus::Disconnected)
 }
 
 /// Start a reconnect loop unless one is already running.
