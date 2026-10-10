@@ -59,8 +59,9 @@ static SUPPRESS: Mutex<SuppressState> = Mutex::new(SuppressState {
 
 /// Start the Interception capture thread and bind to the configured remote.
 ///
-/// If `probe_devices` cannot find the remote the thread still runs and keeps
-/// re-probing once a second until the device appears.
+/// If `probe_devices` cannot find the remote the thread still runs; it binds
+/// once the remote appears, driven by device events (see `device_events`) with
+/// a slow fallback.
 pub fn start_capture() -> Result<(), String> {
     if CAPTURE_THREAD.lock().unwrap().is_some() {
         return Ok(()); // already running
