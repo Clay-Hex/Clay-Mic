@@ -515,9 +515,27 @@ static RECONNECTING: std::sync::atomic::AtomicBool =
 #[cfg(target_os = "windows")]
 static CONNECT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Bumped on every user-initiated connect. A reconnect loop captures the value
+/// it started under and stops once a newer connect has happened — an address
+/// comparison cannot tell "the UI reconnected the same device" apart.
+#[cfg(target_os = "windows")]
+static CONNECT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Connect to the remote, keep the session alive, and hand the audio/control
 /// channels to the voice session listener.
+///
+/// User-initiated entry: it supersedes any in-flight reconnect loop.
 pub fn connect_and_store(address: &str) -> Result<BleDevice, String> {
+    #[cfg(target_os = "windows")]
+    {
+        CONNECT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    connect_session(address)
+}
+
+/// Connect and store without bumping the epoch; the reconnect loop calls this
+/// so its own attempts do not look like a superseding connect.
+fn connect_session(address: &str) -> Result<BleDevice, String> {
     #[cfg(target_os = "windows")]
     {
         // Serialize with the reconnect loop so two connects cannot race on the
@@ -579,10 +597,14 @@ pub fn is_connected() -> bool {
     }
 }
 
-/// Drop the session (releases the GATT connection).
+/// Drop the session (releases the GATT connection) and stop any reconnect loop
+/// from reviving it.
 pub fn disconnect() {
     #[cfg(target_os = "windows")]
     {
+        use std::sync::atomic::Ordering;
+        CONNECT_EPOCH.fetch_add(1, Ordering::SeqCst);
+        *LAST_ADDRESS.lock().unwrap() = None;
         *SESSION.lock().unwrap() = None;
     }
 }
@@ -635,7 +657,9 @@ fn spawn_reconnect(address: String) {
 /// connection replaces this one. One loop runs at a time.
 #[cfg(target_os = "windows")]
 fn reconnect_loop(address: &str) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
+    let epoch = CONNECT_EPOCH.load(Ordering::SeqCst);
     let mut attempt = 0u32;
     loop {
         let delay = match attempt {
@@ -646,10 +670,10 @@ fn reconnect_loop(address: &str) -> Result<(), String> {
             _ => 15,
         };
         std::thread::sleep(Duration::from_secs(delay));
-        if LAST_ADDRESS.lock().unwrap().as_deref() != Some(address) {
+        if CONNECT_EPOCH.load(Ordering::SeqCst) != epoch {
             return Err("superseded by another connection".into());
         }
-        match connect_and_store(address) {
+        match connect_session(address) {
             Ok(device) => {
                 log::info!(
                     "ble: reconnect succeeded ({} · {:?})",
