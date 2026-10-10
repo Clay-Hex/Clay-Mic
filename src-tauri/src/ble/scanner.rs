@@ -682,8 +682,12 @@ fn spawn_reconnect(address: String) {
 fn reconnect_loop(address: &str, epoch: u64) -> Result<(), String> {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
-    let mut attempt = 0u32;
-    loop {
+    /// Give up after this many consecutive failures so a remote that was
+    /// removed or unpaired does not retry forever. Along with the delay ramp
+    /// (1+2+4+8 then 15s each) this is roughly 7 minutes.
+    const MAX_ATTEMPTS: u32 = 30;
+
+    for attempt in 0..MAX_ATTEMPTS {
         let delay = match attempt {
             0 => 1,
             1 => 2,
@@ -709,8 +713,8 @@ fn reconnect_loop(address: &str, epoch: u64) -> Result<(), String> {
             }
             Err(error) => log::info!("ble: reconnect attempt {attempt} failed: {error}"),
         }
-        attempt = attempt.saturating_add(1);
     }
+    Err(format!("gave up after {MAX_ATTEMPTS} attempts"))
 }
 
 /// Reply to the remote's microphone request by opening the ATVV microphone.
