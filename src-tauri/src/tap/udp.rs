@@ -136,7 +136,7 @@ fn maybe_self_heal() {
         return;
     }
     log::info!("tap: hook heartbeat lost while suppression is on; re-injecting");
-    std::thread::spawn(crate::tap::try_inject_if_ready);
+    std::thread::spawn(crate::tap::try_reinject_if_ready);
 }
 
 #[derive(serde::Deserialize)]
