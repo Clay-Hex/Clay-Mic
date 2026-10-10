@@ -292,9 +292,13 @@ fn reconcile(api: &Driver, ctx: *mut std::ffi::c_void) {
 
     match probe_devices(api, ctx) {
         Some(dev) if dev == bound => {
-            // Same slot: re-arm anyway, since a driver reload or a filter-chain
-            // repair can clear the filter without any device event.
-            api.set_key_filter(ctx, dev, KEY_FILTER_ALL);
+            // Same slot: re-arm only when the read-back says it is not ours
+            // (a driver reload or filter-chain repair can clear it without any
+            // device event). Without a read-back, re-arm defensively.
+            match api.key_filter(ctx, dev) {
+                Some(mask) if mask == KEY_FILTER_ALL => {}
+                _ => api.set_key_filter(ctx, dev, KEY_FILTER_ALL),
+            }
         }
         Some(dev) => {
             if bound > 0 {
