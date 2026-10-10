@@ -65,6 +65,8 @@ static SERVER_RUNNING: AtomicU32 = AtomicU32::new(0);
 static LAST_PACKET: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// Version reported by the resident hook DLL's latest heartbeat.
 static DLL_VERSION: Mutex<Option<String>> = Mutex::new(None);
+/// PID reported by the resident hook DLL's latest heartbeat.
+static HOOK_PID: Mutex<Option<u32>> = Mutex::new(None);
 /// Previous `client_connected()` as last pushed — used to emit on 1→0.
 static WAS_CONNECTED: AtomicU32 = AtomicU32::new(0);
 /// When 0 (after remove), packets are ignored so a resident hook DLL cannot
@@ -85,6 +87,39 @@ fn client_connected() -> bool {
         .lock()
         .unwrap()
         .is_some_and(|at| at.elapsed() <= CLIENT_TTL)
+}
+
+/// PID the resident hook last reported, if any.
+fn hook_pid() -> Option<u32> {
+    *HOOK_PID.lock().unwrap()
+}
+
+/// Whether a hook in `host_pid` is proven live: a fresh heartbeat naming
+/// exactly that process. A pooled WUDFHost can inherit a stale marker, so the
+/// heartbeat — not the marker — is what makes a hook "healthy".
+fn hook_healthy_for(host_pid: u32) -> bool {
+    client_connected() && hook_pid() == Some(host_pid)
+}
+
+/// Wait (bounded) for a heartbeat from `host_pid`.
+fn wait_hook_heartbeat(host_pid: u32, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if hook_healthy_for(host_pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
+/// Whether a verified hook for the current host is in place: a fresh heartbeat
+/// from it, or a marker naming exactly that host (grace before the first beat).
+pub(super) fn injected_in_host(host_pid: Option<u32>) -> bool {
+    let Some(host) = host_pid else {
+        return false;
+    };
+    hook_healthy_for(host) || read_marker_pid() == Some(host)
 }
 
 fn lock_inject() -> std::sync::MutexGuard<'static, ()> {
@@ -316,9 +351,17 @@ fn inject_common(force: bool) -> Result<(), String> {
     ensure_server()?;
 
     if !force && resolve_injected_pid(Some(host_pid)).is_some() {
-        log::info!("tap already injected; skipping reload");
-        mark_injected(host_pid);
-        return Ok(());
+        // A marker says a hook may be resident, but only a heartbeat from THIS
+        // host proves it: a pooled WUDFHost can carry the marker with no DLL.
+        // Give the beat a moment before deciding to reload.
+        if hook_healthy_for(host_pid)
+            || wait_hook_heartbeat(host_pid, std::time::Duration::from_millis(1200))
+        {
+            log::info!("tap already injected (heartbeat from host {host_pid}); skipping reload");
+            mark_injected(host_pid);
+            return Ok(());
+        }
+        log::info!("tap marker present but no heartbeat from host {host_pid}; re-injecting");
     }
 
     match inject_dll_into(host_pid) {
