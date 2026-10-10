@@ -636,8 +636,11 @@ fn spawn_reconnect(address: String) {
     if RECONNECTING.swap(true, Ordering::SeqCst) {
         return;
     }
+    // Capture the epoch here, on the event thread: a connect that lands before
+    // the loop thread starts must still supersede it.
+    let epoch = CONNECT_EPOCH.load(Ordering::SeqCst);
     std::thread::spawn(move || {
-        let result = reconnect_loop(&address);
+        let result = reconnect_loop(&address, epoch);
         RECONNECTING.store(false, Ordering::SeqCst);
         match result {
             Ok(()) => log::info!("ble: reconnected to {address}"),
@@ -649,10 +652,9 @@ fn spawn_reconnect(address: String) {
 /// Retry the connection with a growing backoff until it succeeds or another
 /// connection replaces this one. One loop runs at a time.
 #[cfg(target_os = "windows")]
-fn reconnect_loop(address: &str) -> Result<(), String> {
+fn reconnect_loop(address: &str, epoch: u64) -> Result<(), String> {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
-    let epoch = CONNECT_EPOCH.load(Ordering::SeqCst);
     let mut attempt = 0u32;
     loop {
         let delay = match attempt {
