@@ -572,6 +572,14 @@ pub fn try_reinject_if_ready() {
 }
 
 fn run_inject(allow_elevation: bool) {
+    if !allow_elevation {
+        // Unattended self-heal runs only while the user actually wants
+        // suppression and has not explicitly removed the hook. This covers
+        // every silent caller (heartbeat loss, BLE reconnect).
+        if ACCEPTING.load(Ordering::SeqCst) != 1 || !crate::keymap::snapshot().suppress {
+            return;
+        }
+    }
     match ensure_injected(allow_elevation) {
         Ok(()) => {
             // Hook DLL may take a moment to init and send a heartbeat.

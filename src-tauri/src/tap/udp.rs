@@ -125,17 +125,10 @@ struct HbPacket {
 }
 
 /// A hook that stops beating may mean its WUDFHost was recreated without it.
-/// Re-inject on demand — but only while the user is actually suppressing keys,
-/// and only for a crash: an explicit remove clears `ACCEPTING` and must stay
-/// off.
+/// The gating (suppression on, not explicitly removed) lives in
+/// `tap::try_reinject_if_ready`, shared with the reconnect self-heal.
 fn maybe_self_heal() {
-    if ACCEPTING.load(Ordering::SeqCst) != 1 {
-        return;
-    }
-    if !crate::keymap::snapshot().suppress {
-        return;
-    }
-    log::info!("tap: hook heartbeat lost while suppression is on; re-injecting");
+    log::info!("tap: hook heartbeat lost; checking whether to re-inject");
     std::thread::spawn(crate::tap::try_reinject_if_ready);
 }
 
