@@ -673,6 +673,9 @@ fn reconnect_loop(address: &str) -> Result<(), String> {
                     device.name,
                     device.model
                 );
+                // A reconnect usually means the remote's WUDFHost was recreated
+                // without our hook; restore it. Silent path — no UAC while away.
+                std::thread::spawn(crate::tap::try_reinject_if_ready);
                 return Ok(());
             }
             Err(error) => log::info!("ble: reconnect attempt {attempt} failed: {error}"),
