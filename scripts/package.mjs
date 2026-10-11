@@ -100,6 +100,18 @@ if (existsSync(keyslotsExact)) {
   }
 }
 
+// Updater helper: packaged beside the app and required for one-click updates,
+// so a missing one is a broken package — fail loudly like the main binary.
+const updater = join(releaseDir, "clay-update.exe");
+if (existsSync(updater)) {
+  take(updater);
+} else {
+  console.error(
+    "未找到 clay-update.exe（beforeBuildCommand 未生效？请重新构建）。",
+  );
+  process.exit(1);
+}
+
 if (copied.length === 0) {
   console.error("未找到可打包的产物，构建可能未成功。");
   process.exit(1);

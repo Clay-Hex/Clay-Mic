@@ -20,6 +20,7 @@ pub mod runtime;
 pub mod stats;
 pub mod stt;
 pub mod tray;
+pub mod update;
 pub mod voice;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -102,6 +103,8 @@ pub fn run() {
                 // never be true before the server runs.
                 std::thread::spawn(crate::tap::ensure_server_public);
             }
+            // Reconcile a swap the updater may have just made.
+            crate::update::on_startup();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -143,6 +146,12 @@ pub fn run() {
             commands::inject_tap,
             commands::remove_tap,
             commands::kill_wudfhost,
+            update::check_update,
+            update::download_update,
+            update::cancel_download,
+            update::apply_update,
+            update::open_url,
+            update::open_updates_dir,
         ])
         .on_window_event(|window, event| {
             match window.label() {

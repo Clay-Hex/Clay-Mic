@@ -128,7 +128,7 @@ clay-mic/
 
 ## 版本发布
 
-版本的**唯一来源**是 `package.json` 的 `version` 字段。其余 5 个文件（`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/keyslots/Cargo.toml`、`src-tauri/tap-dll/Cargo.toml`、`src-tauri/Cargo.lock` 的三个工作区成员行）由脚本自动同步（`package-lock.json` 由 npm 自行维护），**禁止手动修改**。
+版本的**唯一来源**是 `package.json` 的 `version` 字段。其余 6 个文件（`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/keyslots/Cargo.toml`、`src-tauri/tap-dll/Cargo.toml`、`src-tauri/updater/Cargo.toml`、`src-tauri/Cargo.lock` 的四个工作区成员行）由脚本自动同步（`package-lock.json` 由 npm 自行维护），**禁止手动修改**。
 
 ### 发布流程
 

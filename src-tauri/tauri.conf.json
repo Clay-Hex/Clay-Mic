@@ -5,9 +5,9 @@
   "version": "1.1.1",
   "identifier": "com.clay-mic.app",
   "build": {
-    "beforeDevCommand": "npm run build:keyslots:release && npm run build:tap:release && npm run dev",
+    "beforeDevCommand": "npm run build:keyslots:release && npm run build:tap:release && npm run build:updater && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build:tap:release && npm run build && npm run build:keyslots:release",
+    "beforeBuildCommand": "npm run build:tap:release && npm run build:updater:release && npm run build && npm run build:keyslots:release",
     "frontendDist": "../dist"
   },
   "bundle": {

@@ -14,6 +14,8 @@
     "build:tap": "cargo build --manifest-path src-tauri/Cargo.toml --package clay-tap",
     "build:tap:release": "cargo build --release --manifest-path src-tauri/Cargo.toml --package clay-tap",
     "build:keyslots:release": "cargo build --release --manifest-path src-tauri/Cargo.toml -p clay-mic-keyslots",
+    "build:updater": "cargo build --manifest-path src-tauri/Cargo.toml -p clay-mic-updater",
+    "build:updater:release": "cargo build --release --manifest-path src-tauri/Cargo.toml -p clay-mic-updater",
     "package": "node scripts/package.mjs",
     "package:copy": "node scripts/package.mjs --no-build",
     "caps": "cargo run --manifest-path src-tauri/Cargo.toml -- --generate-caps",
@@ -27,7 +29,7 @@
     "release:patch": "npm version patch",
     "release:minor": "npm version minor",
     "release:major": "npm version major",
-    "version": "node scripts/sync-version.mjs && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/keyslots/Cargo.toml src-tauri/tap-dll/Cargo.toml src-tauri/Cargo.lock && npm run changelog && git add CHANGELOG.md"
+    "version": "node scripts/sync-version.mjs && git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/keyslots/Cargo.toml src-tauri/tap-dll/Cargo.toml src-tauri/updater/Cargo.toml src-tauri/Cargo.lock && npm run changelog && git add CHANGELOG.md"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.6.0",

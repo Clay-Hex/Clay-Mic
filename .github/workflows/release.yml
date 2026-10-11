@@ -82,9 +82,22 @@ jobs:
           OUTPUT: RELEASE_NOTES.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # portable.zip 的校验和随 Release 一起发布，供应用内更新做完整性校验。
+      # 与 zip 同源：防下残下错，不防账号失陷（仅靠仓库账号 2FA）。
+      # 历史 Release 没有该资产，应用侧按「未提供校验和」处理。
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem packages/*.zip | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Set-Content -NoNewline -Encoding ascii "$($_.FullName).sha256"
+          }
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: packages/*.zip
+          files: |
+            packages/*.zip
+            packages/*.sha256
           body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: true

@@ -1,0 +1,14 @@
+[package]
+name = "clay-mic-updater"
+version = "1.1.1"
+edition = "2021"
+description = "Applies a staged Clay-Mic update after the app exits: swap files, launch the new build, roll back on failure."
+license = "MIT"
+
+[[bin]]
+name = "clay-update"
+path = "src/main.rs"
+
+# Deliberately dependency-free: a process that rewrites the app directory
+# should carry as small a supply chain as the raw platform calls it needs.
+[dependencies]
