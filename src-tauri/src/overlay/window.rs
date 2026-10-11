@@ -44,8 +44,21 @@ pub fn hide_overlay(app: &AppHandle) {
 }
 
 pub fn set_indicator_visible(app: &AppHandle, visible: bool) {
-    if let Some(window) = app.get_webview_window(INDICATOR_LABEL) {
-        let _ = if visible { window.show() } else { window.hide() };
+    let Some(window) = app.get_webview_window(INDICATOR_LABEL) else {
+        log::warn!("indicator: window {INDICATOR_LABEL} not found");
+        return;
+    };
+    let result = if visible { window.show() } else { window.hide() };
+    match result {
+        Ok(()) => {
+            log::info!(
+                "indicator: visible={visible} is_visible={:?} pos={:?} size={:?}",
+                window.is_visible(),
+                window.outer_position().ok(),
+                window.outer_size().ok(),
+            );
+        }
+        Err(error) => log::warn!("indicator: visible={visible} failed: {error}"),
     }
 }
 

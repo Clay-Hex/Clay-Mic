@@ -2,6 +2,7 @@ pub mod audio;
 pub mod ble;
 pub mod config;
 pub mod db;
+pub mod device_events;
 pub mod download;
 pub mod tap;
 pub mod hid;
@@ -19,6 +20,7 @@ pub mod runtime;
 pub mod stats;
 pub mod stt;
 pub mod tray;
+pub mod update;
 pub mod voice;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -94,12 +96,15 @@ pub fn run() {
                         log::warn!("restore suppression on launch failed: {}", error);
                     }
                 });
-            } else if crate::tap::status().injected {
-                // Resident hook DLL from last session: accept reconnects even
-                // without suppression so status does not stick at a false
-                // "not connected" after restart.
+            } else if crate::tap::marker_present() {
+                // Resident hook DLL from last session: bring the UDP server up
+                // so its heartbeat can mark it connected. This keys off the
+                // marker — `injected` is derived from that heartbeat and would
+                // never be true before the server runs.
                 std::thread::spawn(crate::tap::ensure_server_public);
             }
+            // Reconcile a swap the updater may have just made.
+            crate::update::on_startup();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -140,6 +145,13 @@ pub fn run() {
             commands::get_tap_status,
             commands::inject_tap,
             commands::remove_tap,
+            commands::kill_wudfhost,
+            update::check_update,
+            update::download_update,
+            update::cancel_download,
+            update::apply_update,
+            update::open_url,
+            update::open_updates_dir,
         ])
         .on_window_event(|window, event| {
             match window.label() {
@@ -537,6 +549,14 @@ mod commands {
     #[tauri::command]
     pub async fn remove_tap() -> Result<(), String> {
         tauri::async_runtime::spawn_blocking(crate::tap::remove_command)
+            .await
+            .map_err(|error| error.to_string())?
+    }
+
+    /// End the WUDFHost hosting the remote (may prompt UAC).
+    #[tauri::command]
+    pub async fn kill_wudfhost() -> Result<String, String> {
+        tauri::async_runtime::spawn_blocking(crate::tap::kill_wudfhost_command)
             .await
             .map_err(|error| error.to_string())?
     }

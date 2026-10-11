@@ -7,7 +7,6 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use crate::interception::{
     Driver, KeyEvent, KEYBOARD_SLOT_COUNT, KEY_FILTER_ALL, KEY_FILTER_NONE, STROKE_KEY_UP,
@@ -22,6 +21,15 @@ static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Interception device id currently filtered (0 = not bound yet).
 static TARGET_DEVICE: AtomicI32 = AtomicI32::new(0);
+
+/// Set when a device change may have invalidated the binding; the capture loop
+/// re-evaluates on its next iteration.
+static RECONCILE_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// Ask the capture loop to re-check which slot holds the configured remote.
+pub fn request_reconcile() {
+    RECONCILE_PENDING.store(true, Ordering::SeqCst);
+}
 
 /// The loaded Interception DLL bindings. Once loaded, kept for the process
 /// lifetime (the driver must stay resident anyway).
@@ -50,8 +58,9 @@ static SUPPRESS: Mutex<SuppressState> = Mutex::new(SuppressState {
 
 /// Start the Interception capture thread and bind to the configured remote.
 ///
-/// If `probe_devices` cannot find the remote the thread still runs and keeps
-/// re-probing once a second until the device appears.
+/// If `probe_devices` cannot find the remote the thread still runs; it binds
+/// once the remote appears, driven by device events (see `device_events`) with
+/// a slow fallback.
 pub fn start_capture() -> Result<(), String> {
     if CAPTURE_THREAD.lock().unwrap().is_some() {
         return Ok(()); // already running
@@ -102,6 +111,7 @@ pub fn start_capture() -> Result<(), String> {
 
     // Mark capture as running (the thread takes over from here).
     *CAPTURE_THREAD.lock().unwrap() = Some(0);
+    crate::device_events::start();
     log::info!("Interception capture started");
     Ok(())
 }
@@ -158,30 +168,25 @@ pub fn set_suppression(enabled: bool, device_path: Option<String>) -> Result<(),
 /// Main capture loop, runs on its own thread.
 ///
 /// Blocks on `interception_wait_with_timeout` with a 50 ms timeout so the
-/// thread can check `STOP_REQUESTED` periodically, and re-probes for the
-/// remote about once a second until it is bound.
+/// thread stays responsive to `STOP_REQUESTED`, and re-checks the binding only
+/// when `device_events` reports a HID interface change (plus a slow fallback).
 fn run_capture_loop(api: &Driver, ctx: *mut std::ffi::c_void) {
     const TIMEOUT_MS: u32 = 50;
+
     let mut strokes = [KeyEvent::default(); 8];
     let mut first = true;
-    let mut next_probe = Instant::now();
 
     loop {
         if STOP_REQUESTED.load(Ordering::SeqCst) {
             break;
         }
 
-        // Late-bind: if the remote was not connected at startup, keep looking.
-        let now = Instant::now();
-        if now >= next_probe {
-            next_probe = now + Duration::from_secs(1);
-            if TARGET_DEVICE.load(Ordering::SeqCst) == 0 {
-                if let Some(dev) = probe_devices(api, ctx) {
-                    api.set_key_filter(ctx, dev, KEY_FILTER_ALL);
-                    TARGET_DEVICE.store(dev, Ordering::SeqCst);
-                    log::info!("late-bound configured device {dev}");
-                }
-            }
+        // Re-check the binding only when `device_events` reports a HID interface
+        // change. The steady state must touch the driver through nothing but the
+        // wait/read below: extra filter IOCTLs on this thread are what make the
+        // process un-terminable at exit.
+        if RECONCILE_PENDING.swap(false, Ordering::SeqCst) {
+            reconcile(api, ctx);
         }
 
         let device = api.wait_for_device(ctx, TIMEOUT_MS);
@@ -263,8 +268,63 @@ fn process_target_stroke(stroke: &KeyEvent, key_up: bool) {
 // Device probing
 // ---------------------------------------------------------------------------
 
+/// Bring the Interception filter in line with the desired state: arm it on the
+/// slot that currently holds the configured remote, release it otherwise.
+///
+/// Runs on the capture thread only, so filter mutations never interleave. A
+/// fresh scan (rather than trusting the old slot) is what follows the remote
+/// to a new slot after a re-enumeration.
+fn reconcile(api: &Driver, ctx: *mut std::ffi::c_void) {
+    if STOP_REQUESTED.load(Ordering::SeqCst) {
+        return;
+    }
+    let bound = TARGET_DEVICE.load(Ordering::SeqCst);
+
+    let enabled = SUPPRESS.lock().unwrap().enabled;
+    if !enabled || configured_identity().is_none() {
+        release_binding(api, ctx, bound);
+        return;
+    }
+
+    match probe_devices(api, ctx) {
+        Some(dev) if dev == bound => {
+            // Already armed on the right slot: leave the driver alone. Re-arming
+            // (or even reading the filter back) from this thread is what wedges
+            // the Interception wait at process exit.
+        }
+        Some(dev) => {
+            if bound > 0 {
+                log::info!("hid: remote moved from slot {bound} to {dev}; re-binding");
+                release_binding(api, ctx, bound);
+            } else {
+                log::info!("hid: bound to configured remote on slot {dev}");
+            }
+            api.set_key_filter(ctx, dev, KEY_FILTER_ALL);
+            TARGET_DEVICE.store(dev, Ordering::SeqCst);
+        }
+        None => {
+            if bound > 0 {
+                log::warn!(
+                    "hid: slot {bound} no longer holds the remote; its keys pass through"
+                );
+                release_binding(api, ctx, bound);
+            }
+        }
+    }
+}
+
+/// Clear the filter on `bound` (a no-op when nothing is bound).
+fn release_binding(api: &Driver, ctx: *mut std::ffi::c_void, bound: i32) {
+    if bound > 0 {
+        api.set_key_filter(ctx, bound, KEY_FILTER_NONE);
+        TARGET_DEVICE.store(0, Ordering::SeqCst);
+    }
+}
+
 /// Scan all keyboard slots and return the device id whose hardware id matches
 /// the device the user configured, or `None` if it is not present.
+///
+/// Silent on a miss: the caller knows whether a miss is notable.
 fn probe_devices(api: &Driver, ctx: *mut std::ffi::c_void) -> Option<i32> {
     let Some(wanted) = configured_identity() else {
         log::debug!("probe: no device configured yet");
@@ -272,24 +332,32 @@ fn probe_devices(api: &Driver, ctx: *mut std::ffi::c_void) -> Option<i32> {
     };
 
     for dev in 1..=KEYBOARD_SLOT_COUNT {
-        let mut buf = vec![0u8; 1024];
-        let len = api.hardware_id(ctx, dev, &mut buf) as usize;
-        if len < 2 {
+        let Some(hwid) = hardware_id_of(api, ctx, dev) else {
             continue;
-        }
-        let hwid = decode_wide(&buf, len);
-        if hwid.is_empty() {
-            continue;
-        }
+        };
         log::debug!("interception device {dev}: {hwid}");
         if parse_vid_pid(&hwid) == Some(wanted) {
             log::info!("probe: device {dev} matches configured remote ({hwid})");
             return Some(dev);
         }
     }
-
-    log::warn!("probe: configured device not found in slots 1..{KEYBOARD_SLOT_COUNT}");
     None
+}
+
+/// Hardware id the driver reports for one slot right now, `None` when the slot
+/// holds no device.
+fn hardware_id_of(api: &Driver, ctx: *mut std::ffi::c_void, device: i32) -> Option<String> {
+    let mut buf = vec![0u8; 1024];
+    let len = api.hardware_id(ctx, device, &mut buf) as usize;
+    if len < 2 {
+        return None;
+    }
+    let hwid = decode_wide(&buf, len);
+    if hwid.is_empty() {
+        None
+    } else {
+        Some(hwid)
+    }
 }
 
 /// Interception returns hardware ids as UTF-16LE wide strings (NUL-terminated).

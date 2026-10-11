@@ -16,10 +16,10 @@
 
 use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use host::{clear_marker_pid, find_host_pid, read_marker_pid,
+use host::{clear_marker_pid, find_host_pid, pid_is_wudfhost, read_marker_pid,
     resolve_injected_pid, write_marker_pid,
 };
 use process::{eject_dll_from, inject_dll_into};
@@ -65,11 +65,18 @@ static SERVER_RUNNING: AtomicU32 = AtomicU32::new(0);
 static LAST_PACKET: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// Version reported by the resident hook DLL's latest heartbeat.
 static DLL_VERSION: Mutex<Option<String>> = Mutex::new(None);
+/// PID reported by the resident hook DLL's latest heartbeat.
+static HOOK_PID: Mutex<Option<u32>> = Mutex::new(None);
 /// Previous `client_connected()` as last pushed — used to emit on 1→0.
 static WAS_CONNECTED: AtomicU32 = AtomicU32::new(0);
 /// When 0 (after remove), packets are ignored so a resident hook DLL cannot
 /// look connected. Starts at 1 so a leftover marker can heartbeat again.
 static ACCEPTING: AtomicU32 = AtomicU32::new(1);
+/// Whether the hook is wanted (default) or the user deliberately dropped it
+/// (`移除` / `结束 WUDFHost`). Kept separate from `ACCEPTING`, which only
+/// governs whether UDP packets are trusted, so an unrelated path clearing
+/// `ACCEPTING` can never silently switch unattended self-heal off.
+static HOOK_WANTED: AtomicBool = AtomicBool::new(true);
 /// Serializes ensure_server / stop_server so two threads cannot race.
 static SERVER_LOCK: Mutex<()> = Mutex::new(());
 /// UDP recv-thread handle; joined in stop_server so the port is free.
@@ -85,6 +92,45 @@ fn client_connected() -> bool {
         .lock()
         .unwrap()
         .is_some_and(|at| at.elapsed() <= CLIENT_TTL)
+}
+
+/// PID the resident hook last reported, if any.
+fn hook_pid() -> Option<u32> {
+    *HOOK_PID.lock().unwrap()
+}
+
+/// Whether a hook in `host_pid` is proven live: a fresh heartbeat naming
+/// exactly that process. A pooled WUDFHost can inherit a stale marker, so the
+/// heartbeat — not the marker — is what makes a hook "healthy".
+fn hook_healthy_for(host_pid: u32) -> bool {
+    client_connected() && hook_pid() == Some(host_pid)
+}
+
+/// Wait (bounded) for a heartbeat from `host_pid`.
+fn wait_hook_heartbeat(host_pid: u32, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if hook_healthy_for(host_pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
+/// Whether a live hook is proven for the current host: a fresh heartbeat that
+/// names it. The marker is deliberately NOT consulted here — a pooled WUDFHost
+/// can carry a stale marker and would then show a false "injected".
+pub(super) fn injected_in_host(host_pid: Option<u32>) -> bool {
+    host_pid.is_some_and(hook_healthy_for)
+}
+
+/// Whether a hook was injected before (a marker exists). Startup uses this —
+/// not `injected` — to decide whether to bring the UDP server up: `injected`
+/// is derived from a heartbeat that needs that very server, so gating on it
+/// would deadlock the resident-hook case.
+pub fn marker_present() -> bool {
+    read_marker_pid().is_some()
 }
 
 fn lock_inject() -> std::sync::MutexGuard<'static, ()> {
@@ -112,7 +158,9 @@ pub struct TapStatus {
     pub dll_ready: bool,
     pub host_pid: Option<u32>,
     pub host_alive: bool,
-    /// Marker file matches a live WUDFHost (or this session injected it).
+    /// A live hook is proven in the current WUDFHost: a fresh heartbeat that
+    /// names it. (`tap::marker_present` is the marker-based signal, kept
+    /// separate for the startup server gate.)
     pub injected: bool,
     /// UDP recv thread is running.
     pub listening: bool,
@@ -202,14 +250,36 @@ fn clear_error() {
 // Orchestration used by commands + apply_suppression
 // ---------------------------------------------------------------------------
 
+/// Why launching the elevated helper ended, so callers do not have to
+/// string-match the UAC wording.
+enum ElevationError {
+    /// The user dismissed the UAC prompt.
+    Cancelled,
+    Failed(String),
+}
+
+/// Why an inject attempt ended.
+enum InjectFailure {
+    /// The hook needs administrator rights and was left un-injected; an
+    /// unattended call must not pop UAC, so the user triggers it from the UI.
+    NeedsElevation(String),
+    /// The user dismissed the UAC prompt (UI-initiated calls only).
+    Cancelled,
+    /// The remote's WUDFHost is not present.
+    HostMissing,
+    /// A real failure worth surfacing as an error.
+    Failed(String),
+}
+
 /// Launch the elevated helper and wait for its status file.
-fn run_elevated_helper(args: [&str; 2]) -> Result<(), String> {
+fn run_elevated_helper(args: [&str; 2]) -> Result<(), ElevationError> {
     use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
     use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
     use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
     use windows::core::PCWSTR;
 
-    let exe = std::env::current_exe().map_err(|error| format!("定位程序失败：{error}"))?;
+    let exe = std::env::current_exe()
+        .map_err(|error| ElevationError::Failed(format!("定位程序失败：{error}")))?;
 
     // Drop any status file from a previous run so a UAC cancel cannot be
     // mistaken for success via a stale ok=true.
@@ -241,15 +311,15 @@ fn run_elevated_helper(args: [&str; 2]) -> Result<(), String> {
             Ok(()) => info.hProcess,
             Err(error) => {
                 if error.code() == ERROR_CANCELLED.to_hresult() {
-                    return Err("操作被取消".into());
+                    return Err(ElevationError::Cancelled);
                 }
-                return Err(format!("启动提权进程失败：{error}"));
+                return Err(ElevationError::Failed(format!("启动提权进程失败：{error}")));
             }
         }
     };
 
     if process.is_invalid() {
-        return Err("未获取到进程句柄".into());
+        return Err(ElevationError::Failed("未获取到进程句柄".into()));
     }
 
     let exit_code = unsafe {
@@ -267,16 +337,20 @@ fn run_elevated_helper(args: [&str; 2]) -> Result<(), String> {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
                 if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
                     if !err.is_empty() {
-                        return Err(err.to_string());
+                        return Err(ElevationError::Failed(err.to_string()));
                     }
                 }
             }
         }
-        return Err("操作未完成：可能被取消或未获得管理员权限".into());
+        return Err(ElevationError::Failed(
+            "操作未完成：可能被取消或未获得管理员权限".into(),
+        ));
     }
     if !read_status_file_ok() {
         log::warn!("elevated helper exit 0 but inject-status.json missing/stale");
-        return Err("操作未完成：可能被取消或未获得管理员权限".into());
+        return Err(ElevationError::Failed(
+            "操作未完成：可能被取消或未获得管理员权限".into(),
+        ));
     }
     log::info!("elevated helper finished ok");
     Ok(())
@@ -296,29 +370,47 @@ fn read_status_file_ok() -> bool {
 /// Record a verified inject: marker + status push.
 fn mark_injected(pid: u32) {
     ACCEPTING.store(1, Ordering::SeqCst);
+    HOOK_WANTED.store(true, Ordering::SeqCst);
     write_marker_pid(pid);
     clear_error();
     emit_status();
 }
 
-/// Shared inject path for both the background (suppression) and explicit UI
-/// triggers. `force = false` skips when the hook DLL is already loaded.
-fn inject_common(force: bool) -> Result<(), String> {
+/// Shared inject path for the attended (suppression/connect/UI) and the
+/// unattended (heartbeat self-heal) triggers.
+///
+/// `force = false` skips when the hook DLL is already loaded.
+/// `allow_elevation = false` never launches the elevated helper, so an
+/// unattended call cannot pop UAC; it reports `NeedsElevation` instead.
+fn inject_common(force: bool, allow_elevation: bool) -> Result<(), InjectFailure> {
     if !dll_ready() {
         if force {
-            return Err("组件未就绪（缺少 clay_tap.dll）".into());
+            return Err(InjectFailure::Failed("组件未就绪（缺少 clay_tap.dll）".into()));
         }
         log::info!("tap dll not present; skipped");
         return Ok(());
     }
-    let host_pid = find_host_pid()?
-        .ok_or_else(|| "未找到遥控器 WUDFHost（请先连接设备）".to_string())?;
-    ensure_server()?;
+    let host_pid = match find_host_pid() {
+        Ok(Some(pid)) => pid,
+        Ok(None) => return Err(InjectFailure::HostMissing),
+        Err(error) => return Err(InjectFailure::Failed(error)),
+    };
+    if let Err(error) = ensure_server() {
+        return Err(InjectFailure::Failed(error));
+    }
 
     if !force && resolve_injected_pid(Some(host_pid)).is_some() {
-        log::info!("tap already injected; skipping reload");
-        mark_injected(host_pid);
-        return Ok(());
+        // A marker says a hook may be resident, but only a heartbeat from THIS
+        // host proves it: a pooled WUDFHost can carry the marker with no DLL.
+        // Give the beat a moment before deciding to reload.
+        if hook_healthy_for(host_pid)
+            || wait_hook_heartbeat(host_pid, std::time::Duration::from_millis(1200))
+        {
+            log::info!("tap already injected (heartbeat from host {host_pid}); skipping reload");
+            mark_injected(host_pid);
+            return Ok(());
+        }
+        log::info!("tap marker present but no heartbeat from host {host_pid}; re-injecting");
     }
 
     match inject_dll_into(host_pid) {
@@ -329,27 +421,33 @@ fn inject_common(force: bool) -> Result<(), String> {
             Ok(())
         }
         Err(first) => {
+            if !allow_elevation {
+                // Unattended self-heal must never pop UAC: report so the UI can
+                // ask the user to re-inject, and stop here.
+                log::info!("direct inject failed ({first}); not elevating (unattended path)");
+                return Err(InjectFailure::NeedsElevation(first));
+            }
             log::info!("direct inject failed ({first}); elevating");
-            if let Err(error) = run_elevated_helper(["--inject-tap", &host_pid.to_string()]) {
-                // UAC cancel is expected: keep status, only the button message
-                // carries the reason. Real helper failures still surface.
-                if !error.contains("可能被取消") {
+            match run_elevated_helper(["--inject-tap", &host_pid.to_string()]) {
+                Ok(()) if read_status_file_ok() => {
+                    mark_injected(host_pid);
+                    log::info!("tap injected (elevated) into pid {host_pid}");
+                    wait_udp_heartbeat();
+                    Ok(())
+                }
+                Ok(()) => {
+                    // Do not write marker: elevated path did not verify LoadLibrary.
+                    let message = "注入未确认生效".to_string();
+                    set_error(&message);
+                    emit_status();
+                    Err(InjectFailure::Failed(message))
+                }
+                Err(ElevationError::Cancelled) => Err(InjectFailure::Cancelled),
+                Err(ElevationError::Failed(error)) => {
                     set_error(&error);
                     emit_status();
+                    Err(InjectFailure::Failed(error))
                 }
-                return Err(error);
-            }
-            if read_status_file_ok() {
-                mark_injected(host_pid);
-                log::info!("tap injected (elevated) into pid {host_pid}");
-                wait_udp_heartbeat();
-                Ok(())
-            } else {
-                // Do not write marker: elevated path did not verify LoadLibrary.
-                let message = "注入未确认生效".to_string();
-                set_error(&message);
-                emit_status();
-                Err(message)
             }
         }
     }
@@ -372,15 +470,25 @@ fn wait_udp_heartbeat() {
 
 /// Background path from `apply_suppression(true)`: never downloads, never fails
 /// the toggle; silent no-op when the component is absent.
-fn ensure_injected() -> Result<(), String> {
+fn ensure_injected(allow_elevation: bool) -> Result<(), InjectFailure> {
     let _guard = lock_inject();
-    inject_common(false)
+    inject_common(false, allow_elevation)
 }
 
-/// Explicit UI action: re-inject even if a stale marker exists.
+/// Explicit UI action: re-inject even if a stale marker exists. May elevate.
 pub fn inject_command() -> Result<(), String> {
     let _guard = lock_inject();
-    inject_common(true)
+    inject_common(true, true).map_err(inject_failure_message)
+}
+
+/// Human-readable message for a failed inject, shared by the UI entry points.
+fn inject_failure_message(failure: InjectFailure) -> String {
+    match failure {
+        InjectFailure::NeedsElevation(reason) => reason,
+        InjectFailure::Cancelled => "操作已取消".to_string(),
+        InjectFailure::HostMissing => "未找到遥控器 WUDFHost（请先连接设备）".to_string(),
+        InjectFailure::Failed(error) => error,
+    }
 }
 
 /// Explicit UI action: stop accepting packets, unload the DLL (verified),
@@ -392,6 +500,7 @@ pub fn remove_command() -> Result<(), String> {
     let host = find_host_pid().ok().flatten();
     let target = host.or(marker);
 
+    let mut cancelled = false;
     let eject_result = match target {
         Some(pid) => match eject_dll_from(pid) {
             Ok(()) => Ok(()),
@@ -401,7 +510,11 @@ pub fn remove_command() -> Result<(), String> {
                     // Helper exits 0 only when its own module scan is clean.
                     Ok(()) if read_status_file_ok() => Ok(()),
                     Ok(()) => Err("卸载未通过模块校验".to_string()),
-                    Err(error) => Err(error),
+                    Err(ElevationError::Cancelled) => {
+                        cancelled = true;
+                        Err("操作已取消".to_string())
+                    }
+                    Err(ElevationError::Failed(error)) => Err(error),
                 }
             }
         },
@@ -411,6 +524,7 @@ pub fn remove_command() -> Result<(), String> {
     match eject_result {
         Ok(()) => {
             ACCEPTING.store(0, Ordering::SeqCst);
+            HOOK_WANTED.store(false, Ordering::SeqCst);
             stop_server();
             clear_marker_pid();
             clear_error();
@@ -419,9 +533,8 @@ pub fn remove_command() -> Result<(), String> {
             Ok(())
         }
         Err(error) => {
-            // UAC cancel is an expected user choice: leave status untouched
-            // and let the UI button message carry the reason.
-            if !error.contains("可能被取消") {
+            // A dismissed UAC is the user's choice, not a failure to surface.
+            if !cancelled {
                 set_error(&format!("卸载 DLL 未完成：{error}"));
                 emit_status();
             }
@@ -430,10 +543,65 @@ pub fn remove_command() -> Result<(), String> {
     }
 }
 
-/// Called from `apply_suppression(true)` on a background thread.
-/// Never downloads; never fails the suppression toggle.
+/// End the WUDFHost that hosts the configured remote (needs elevation).
+#[cfg(target_os = "windows")]
+pub fn kill_wudfhost_command() -> Result<String, String> {
+    let pid = find_host_pid()?.ok_or("未找到遥控器对应的 WUDFHost（请先连接设备）")?;
+    log::info!("kill_wudfhost: ending pid={pid}");
+
+    let script = format!(
+        "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue\n\
+         if ($null -eq $p) {{ throw '进程已不存在' }}\n\
+         if ($p.ProcessName -ne 'WUDFHost') {{ throw ('PID {pid} 不是 WUDFHost，而是 ' + $p.ProcessName) }}\n\
+         Stop-Process -Id {pid} -Force\n\
+         Start-Sleep -Milliseconds 300"
+    );
+    crate::keyslots::run_elevated(&script, "kill-wudfhost")?;
+
+    let gone = !pid_is_wudfhost(pid);
+    log::info!("kill_wudfhost: pid={pid} still_wudfhost={gone}");
+    clear_marker_pid();
+    ACCEPTING.store(0, Ordering::SeqCst);
+    // Ending the host is a deliberate reset: its hook is gone until the user
+    // re-injects (as the dialog says), so unattended self-heal must not revive
+    // it. This is the explicit "not wanted" signal, independent of ACCEPTING.
+    HOOK_WANTED.store(false, Ordering::SeqCst);
+    emit_status();
+
+    Ok(if gone {
+        format!("已结束 WUDFHost 进程（PID {pid}）；Windows 会自动重启它，注入已随之失效")
+    } else {
+        format!("已请求结束 PID {pid}，但它仍在运行；请重试或以管理员身份手动结束")
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn kill_wudfhost_command() -> Result<String, String> {
+    Err("仅支持 Windows".into())
+}
+
+/// Attended path from `apply_suppression(true)` / connect / launch restore:
+/// may elevate once. Never downloads; never fails the suppression toggle.
 pub fn try_inject_if_ready() {
-    match ensure_injected() {
+    run_inject(true);
+}
+
+/// Unattended path from the heartbeat-loss self-heal: a silent direct inject
+/// only, so no UAC pops while the user is away.
+pub fn try_reinject_if_ready() {
+    run_inject(false);
+}
+
+fn run_inject(allow_elevation: bool) {
+    if !allow_elevation {
+        // Unattended self-heal runs only while the user actually wants
+        // suppression and has not deliberately dropped the hook. This covers
+        // every silent caller (heartbeat loss, BLE reconnect).
+        if !HOOK_WANTED.load(Ordering::SeqCst) || !crate::keymap::snapshot().suppress {
+            return;
+        }
+    }
+    match ensure_injected(allow_elevation) {
         Ok(()) => {
             // Hook DLL may take a moment to init and send a heartbeat.
             std::thread::spawn(|| {
@@ -450,11 +618,20 @@ pub fn try_inject_if_ready() {
                 );
             });
         }
-        Err(error) => {
-            log::info!("try_inject skipped/failed: {error}");
-            if !error.contains("未找到遥控器") && !error.contains("组件未就绪") {
-                set_error(error);
-            }
+        Err(InjectFailure::HostMissing) => {
+            log::info!("tap inject skipped: no WUDFHost yet");
+        }
+        Err(InjectFailure::NeedsElevation(reason)) => {
+            log::info!("tap needs elevation to re-inject ({reason}); waiting for the user");
+            set_error("需要管理员权限重新注入：请在「HID Tap」点「注入」（可能弹一次 UAC）");
+            emit_status();
+        }
+        Err(InjectFailure::Cancelled) => {
+            // Only UI-initiated calls elevate, so this should not occur here.
+        }
+        Err(InjectFailure::Failed(error)) => {
+            set_error(error);
+            emit_status();
         }
     }
 }

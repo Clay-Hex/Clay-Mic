@@ -81,7 +81,16 @@ mod w {
     }
 
     fn send_heartbeat() {
-        send_bytes(format!(r#"{{"hb":1,"v":"{}"}}"#, env!("CARGO_PKG_VERSION")).as_bytes());
+        // `pid` is the host process the hook lives in; the app uses it to tell
+        // a live hook in the current WUDFHost from a stale one elsewhere.
+        let pid = unsafe { GetCurrentProcessId() };
+        send_bytes(
+            format!(
+                r#"{{"hb":1,"v":"{}","pid":{pid}}}"#,
+                env!("CARGO_PKG_VERSION")
+            )
+            .as_bytes(),
+        );
     }
 
     /// Parse a 9-byte GATT report and emit edge-triggered button events.
@@ -298,6 +307,7 @@ mod w {
     #[link(name = "kernel32")]
     extern "system" {
         fn DisableThreadLibraryCalls(h: *mut c_void) -> i32;
+        fn GetCurrentProcessId() -> u32;
     }
 
     unsafe fn kernel32_disable_thread_library_calls(h: *mut c_void) {

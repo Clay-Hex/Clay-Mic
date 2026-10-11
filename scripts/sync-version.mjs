@@ -22,11 +22,12 @@ const TARGETS = {
   cargoMain: "src-tauri/Cargo.toml",
   cargoKeyslots: "src-tauri/keyslots/Cargo.toml",
   cargoTapDll: "src-tauri/tap-dll/Cargo.toml",
+  cargoUpdater: "src-tauri/updater/Cargo.toml",
   cargoLock: "src-tauri/Cargo.lock",
 };
 
 /** Workspace members whose `version` lives inside Cargo.lock. */
-const LOCK_MEMBERS = ["clay-mic", "clay-mic-keyslots", "clay-tap"];
+const LOCK_MEMBERS = ["clay-mic", "clay-mic-keyslots", "clay-tap", "clay-mic-updater"];
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for testing)
@@ -124,7 +125,7 @@ export function computeEdits(version, files) {
   }
 
   // Cargo.toml files
-  for (const key of ["cargoMain", "cargoKeyslots", "cargoTapDll"]) {
+  for (const key of ["cargoMain", "cargoKeyslots", "cargoTapDll", "cargoUpdater"]) {
     const content = files[key];
     if (content === undefined) continue;
     const re = /^(version\s*=\s*)"([^"]*)"/m;

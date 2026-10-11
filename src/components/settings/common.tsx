@@ -113,13 +113,15 @@ export function SectionBox({ children }: { children: React.ReactNode }) {
   );
 }
 
+const PROGRESS_SOURCE_LABELS: Record<DownloadProgress["source"], string> = {
+  binary: "运行时",
+  model: "模型",
+  interception: "驱动",
+  update: "更新",
+};
+
 export function DownloadBar({ progress }: { progress: DownloadProgress }) {
-  const label =
-    progress.source === "binary"
-      ? "运行时"
-      : progress.source === "model"
-        ? "模型"
-        : "驱动";
+  const label = PROGRESS_SOURCE_LABELS[progress.source];
   return (
     <div className="space-y-1.5">
       <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -132,7 +134,9 @@ export function DownloadBar({ progress }: { progress: DownloadProgress }) {
         {label}：
         {progress.phase === "downloading"
           ? `下载中 ${progress.percent}%`
-          : "解压中…"}
+          : progress.phase === "verifying"
+            ? "校验中…"
+            : "解压中…"}
       </p>
     </div>
   );

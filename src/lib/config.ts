@@ -179,8 +179,8 @@ export interface KeySlotStatus {
 
 /** Download progress event payload. */
 export interface DownloadProgress {
-  source: "binary" | "model" | "interception";
-  phase: "downloading" | "extracting" | "done";
+  source: "binary" | "model" | "interception" | "update";
+  phase: "downloading" | "verifying" | "extracting" | "done";
   percent: number;
 }
 

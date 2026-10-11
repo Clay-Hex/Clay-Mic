@@ -19,9 +19,10 @@ Clay-Mic 是**仅支持 Windows 10/11** 的桌面应用：蓝牙遥控器（BLE 
 ## 目录速览
 
 - `src/` — 前端 React（主窗口 / 悬浮窗 / 指示器三个窗口）
-- `src-tauri/src/` — Rust 后端：`protocol/atvv.rs`（ATVV 解析）、`audio/adpcm.rs`（IMA ADPCM 解码）、`ble/`、`stt/`、`llm/`、`hid/`、`keymap/`、`inject/`、`tap/`
+- `src-tauri/src/` — Rust 后端：`protocol/atvv.rs`（ATVV 解析）、`audio/adpcm.rs`（IMA ADPCM 解码）、`ble/`、`stt/`、`llm/`、`hid/`、`keymap/`、`inject/`、`tap/`、`update/`（检查/下载/应用更新）
 - `src-tauri/keyslots/` — 独立 SYSTEM 服务，NT 符号链接修补键鼠设备槽位（零依赖，纯 FFI）
 - `src-tauri/tap-dll/` — 注入 WUDFHost 的原生 hook DLL（基于 `min_hook_rs`）
+- `src-tauri/updater/` — 独立更新程序 `clay-update.exe`，主程序退出后替换文件、拉起新版、失败回滚（零依赖，纯 FFI）
 - `scripts/` — 构建与版本脚本（`package.mjs`、`sync-version.mjs`）
 - `docs/` — 技术文档与图片
 

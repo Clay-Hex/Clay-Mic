@@ -39,6 +39,7 @@ pub(super) fn stop_server() {
     SERVER_RUNNING.store(0, Ordering::SeqCst);
     *LAST_PACKET.lock().unwrap() = None;
     *DLL_VERSION.lock().unwrap() = None;
+    *HOOK_PID.lock().unwrap() = None;
     WAS_CONNECTED.store(0, Ordering::SeqCst);
     if let Some(handle) = SERVER_THREAD.lock().unwrap().take() {
         let _ = handle.join();
@@ -72,6 +73,9 @@ fn udp_recv_loop() {
                 if text.contains("\"hb\"") {
                     if let Ok(packet) = serde_json::from_str::<HbPacket>(text) {
                         *DLL_VERSION.lock().unwrap() = packet.v;
+                        if packet.pid.is_some() {
+                            *HOOK_PID.lock().unwrap() = packet.pid;
+                        }
                     }
                     if !was_up {
                         log::info!("tap: client heartbeat (UDP)");
@@ -96,6 +100,7 @@ fn udp_recv_loop() {
                 if prev == 1 && now == 0 {
                     log::info!("tap: client heartbeat lost (UDP)");
                     emit_status();
+                    maybe_self_heal();
                 }
             }
             Err(e) => {
@@ -114,6 +119,17 @@ struct HbPacket {
     /// Absent on hooks that predate the versioned heartbeat.
     #[serde(default)]
     v: Option<String>,
+    /// Host process the hook lives in; absent on older hooks.
+    #[serde(default)]
+    pid: Option<u32>,
+}
+
+/// A hook that stops beating may mean its WUDFHost was recreated without it.
+/// The gating (suppression on, not explicitly removed) lives in
+/// `tap::try_reinject_if_ready`, shared with the reconnect self-heal.
+fn maybe_self_heal() {
+    log::info!("tap: hook heartbeat lost; checking whether to re-inject");
+    std::thread::spawn(crate::tap::try_reinject_if_ready);
 }
 
 #[derive(serde::Deserialize)]

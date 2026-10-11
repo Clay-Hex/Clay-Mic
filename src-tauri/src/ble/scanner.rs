@@ -55,6 +55,8 @@ pub mod platform {
         /// Must keep these alive or notifications stop
         _audio_token: i64,
         _control_token: i64,
+        /// Keeps the link-status handler registered, for auto-reconnect.
+        _conn_token: i64,
     }
 
     fn block_on<T, O>(op: windows::core::Result<O>) -> Result<T, String>
@@ -266,6 +268,36 @@ pub mod platform {
         }
     }
 
+    /// Watch the link status so a dropped BLE link is noticed without polling.
+    /// The returned token must be kept (stored in the device struct) for the
+    /// handler to stay registered.
+    fn subscribe_connection_status(device: &BluetoothLEDevice, address: &str) -> i64 {
+        use windows::core::IInspectable;
+        use windows::Devices::Bluetooth::BluetoothConnectionStatus;
+        let address = address.to_string();
+        let handler = TypedEventHandler::<BluetoothLEDevice, IInspectable>::new(
+            move |sender, _args| {
+                // Read the status off the device that raised the event, not a
+                // shared session that may already have moved on.
+                let dropped = sender
+                    .as_ref()
+                    .and_then(|device| device.ConnectionStatus().ok())
+                    .is_some_and(|status| status == BluetoothConnectionStatus::Disconnected);
+                if dropped {
+                    crate::ble::scanner::on_link_dropped(&address);
+                }
+                Ok(())
+            },
+        );
+        match device.ConnectionStatusChanged(&handler) {
+            Ok(token) => token,
+            Err(error) => {
+                log::warn!("ble: subscribe ConnectionStatusChanged failed: {error}");
+                0
+            }
+        }
+    }
+
     /// Connect to a paired BLE device by its Windows device ID.
     /// The device_id is like: "BTHLE\\DEV_14BEFCF3D837\\..."
     pub fn connect_by_id(device_id: &str) -> Result<WinRtBleDevice, String> {
@@ -308,6 +340,7 @@ pub mod platform {
         std::mem::forget(_apartment);
 
         let identity = read_device_identity(&device);
+        let conn_token = subscribe_connection_status(&device, device_id);
 
         Ok(WinRtBleDevice {
             device, name,
@@ -319,6 +352,7 @@ pub mod platform {
             audio_rx: Some(audio_rx), control_rx: Some(control_rx),
             _rx_char: rx, _control_char: ctrl,
             _audio_token, _control_token,
+            _conn_token: conn_token,
         })
     }
 
@@ -359,6 +393,7 @@ pub mod platform {
         std::mem::forget(_apartment);
 
         let identity = read_device_identity(&device);
+        let conn_token = subscribe_connection_status(&device, address);
 
         Ok(WinRtBleDevice {
             device, name,
@@ -370,6 +405,7 @@ pub mod platform {
             audio_rx: Some(audio_rx), control_rx: Some(control_rx),
             _rx_char: rx, _control_char: ctrl,
             _audio_token, _control_token,
+            _conn_token: conn_token,
         })
     }
 
@@ -473,11 +509,71 @@ pub fn list_paired_devices() -> Result<Vec<BleDeviceInfo>, String> {
 static SESSION: std::sync::Mutex<Option<platform::WinRtBleDevice>> =
     std::sync::Mutex::new(None);
 
+/// Address of the remote whose link we keep alive, so a dropped link can be
+/// restored without the user reconnecting.
+#[cfg(target_os = "windows")]
+static LAST_ADDRESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Set while a reconnect attempt loop runs, so repeated link-dropped events
+/// coalesce into one loop.
+#[cfg(target_os = "windows")]
+static RECONNECTING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Set while a session is being (re)built, so a link event from the device
+/// being torn down is not mistaken for the current session dropping.
+#[cfg(target_os = "windows")]
+static CONNECTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Clears `CONNECTING` however `connect_session` exits.
+#[cfg(target_os = "windows")]
+struct ConnectingGuard;
+
+#[cfg(target_os = "windows")]
+impl Drop for ConnectingGuard {
+    fn drop(&mut self) {
+        CONNECTING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Serializes connect attempts (the UI command and the reconnect loop).
+#[cfg(target_os = "windows")]
+static CONNECT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Bumped on every user-initiated connect. A reconnect loop captures the value
+/// it started under and stops once a newer connect has happened — an address
+/// comparison cannot tell "the UI reconnected the same device" apart.
+#[cfg(target_os = "windows")]
+static CONNECT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Connect to the remote, keep the session alive, and hand the audio/control
 /// channels to the voice session listener.
+///
+/// User-initiated entry: it supersedes any in-flight reconnect loop.
 pub fn connect_and_store(address: &str) -> Result<BleDevice, String> {
     #[cfg(target_os = "windows")]
     {
+        CONNECT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    connect_session(address)
+}
+
+/// Connect and store without bumping the epoch; the reconnect loop calls this
+/// so its own attempts do not look like a superseding connect.
+fn connect_session(address: &str) -> Result<BleDevice, String> {
+    #[cfg(target_os = "windows")]
+    {
+        // Serialize with the reconnect loop so two connects cannot race on the
+        // shared session.
+        let _guard = CONNECT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // While the session is rebuilt, ignore link events: dropping the old
+        // device can surface a Disconnected event, and no address is matched
+        // until the new session is actually established.
+        CONNECTING.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _connecting = ConnectingGuard;
+        *LAST_ADDRESS.lock().unwrap() = None;
         // Release any previous connection first so its GATT link cannot
         // interfere with the new service/characteristic discovery.
         *SESSION.lock().unwrap() = None;
@@ -509,6 +605,8 @@ pub fn connect_and_store(address: &str) -> Result<BleDevice, String> {
         if let (Some(audio), Some(control)) = (audio_rx, control_rx) {
             crate::voice::start_session(audio, control, caps);
         }
+        // Arm link matching for the session we just established.
+        *LAST_ADDRESS.lock().unwrap() = Some(address.to_string());
         Ok(info)
     }
     #[cfg(not(target_os = "windows"))]
@@ -530,12 +628,93 @@ pub fn is_connected() -> bool {
     }
 }
 
-/// Drop the session (releases the GATT connection).
+/// Drop the session (releases the GATT connection) and stop any reconnect loop
+/// from reviving it.
 pub fn disconnect() {
     #[cfg(target_os = "windows")]
     {
+        use std::sync::atomic::Ordering;
+        CONNECT_EPOCH.fetch_add(1, Ordering::SeqCst);
+        *LAST_ADDRESS.lock().unwrap() = None;
         *SESSION.lock().unwrap() = None;
     }
+}
+
+/// The link to `address` was reported dropped by its own device event. Ignore
+/// it when another connection has since taken over.
+#[cfg(target_os = "windows")]
+pub fn on_link_dropped(address: &str) {
+    use std::sync::atomic::Ordering;
+    // A rebuild in progress handles its own teardown; ignore its events.
+    if CONNECTING.load(Ordering::SeqCst) {
+        return;
+    }
+    if LAST_ADDRESS.lock().unwrap().as_deref() != Some(address) {
+        return;
+    }
+    log::info!("ble: link to {address} dropped; reconnecting");
+    spawn_reconnect(address.to_string());
+}
+
+/// Start a reconnect loop unless one is already running.
+#[cfg(target_os = "windows")]
+fn spawn_reconnect(address: String) {
+    use std::sync::atomic::Ordering;
+    if RECONNECTING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    // Capture the epoch here, on the event thread: a connect that lands before
+    // the loop thread starts must still supersede it.
+    let epoch = CONNECT_EPOCH.load(Ordering::SeqCst);
+    std::thread::spawn(move || {
+        let result = reconnect_loop(&address, epoch);
+        RECONNECTING.store(false, Ordering::SeqCst);
+        match result {
+            Ok(()) => log::info!("ble: reconnected to {address}"),
+            Err(error) => log::warn!("ble: reconnect to {address} stopped: {error}"),
+        }
+    });
+}
+
+/// Retry the connection with a growing backoff until it succeeds or another
+/// connection replaces this one. One loop runs at a time.
+#[cfg(target_os = "windows")]
+fn reconnect_loop(address: &str, epoch: u64) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    /// Give up after this many consecutive failures so a remote that was
+    /// removed or unpaired does not retry forever. Along with the delay ramp
+    /// (1+2+4+8 then 15s each) this is roughly 7 minutes.
+    const MAX_ATTEMPTS: u32 = 30;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        let delay = match attempt {
+            0 => 1,
+            1 => 2,
+            2 => 4,
+            3 => 8,
+            _ => 15,
+        };
+        std::thread::sleep(Duration::from_secs(delay));
+        if CONNECT_EPOCH.load(Ordering::SeqCst) != epoch {
+            return Err("superseded by another connection".into());
+        }
+        match connect_session(address) {
+            Ok(device) => {
+                log::info!(
+                    "ble: reconnect succeeded ({} · {:?})",
+                    device.name,
+                    device.model
+                );
+                // A reconnect usually means the remote's WUDFHost was recreated
+                // without our hook; restore it. Silent path — no UAC while away.
+                std::thread::spawn(crate::tap::try_reinject_if_ready);
+                return Ok(());
+            }
+            Err(error) => log::info!("ble: reconnect attempt {attempt} failed: {error}"),
+        }
+    }
+    Err(format!("gave up after {MAX_ATTEMPTS} attempts"))
 }
 
 /// Reply to the remote's microphone request by opening the ATVV microphone.

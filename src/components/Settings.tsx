@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  Config,
-  defaultConfig,
-  tauriInvoke,
-  tauriListen,
-  type DownloadProgress,
-  type SttStatus,
-} from "../lib/config";
+import { Config, defaultConfig, tauriInvoke, type SttStatus } from "../lib/config";
+import { useDownloadProgress } from "../lib/useDownloadProgress";
 import { SettingsCoreContext } from "./settings/context";
 import { DriverSect } from "./settings/DriverSect";
 import { InterfaceSect } from "./settings/InterfaceSect";
@@ -46,8 +40,12 @@ export function Settings({
   const [sttStatus, setSttStatus] = useState<SttStatus | null>(null);
   const [sttBusy, setSttBusy] = useState(false);
   const [sttMessage, setSttMessage] = useState<string | null>(null);
-  const [dlProgress, setDlProgress] = useState<DownloadProgress | null>(null);
-  const clearProgress = useCallback(() => setDlProgress(null), []);
+  const [dlProgress, setDlProgress] = useDownloadProgress([
+    "binary",
+    "model",
+    "interception",
+  ]);
+  const clearProgress = useCallback(() => setDlProgress(null), [setDlProgress]);
 
   useEffect(() => {
     localStorage.setItem(SECTION_STORAGE_KEY, section);
@@ -70,27 +68,6 @@ export function Settings({
       });
     return () => {
       cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void tauriListen<DownloadProgress>("download://progress", (p) => {
-      if (p.phase === "done") {
-        setDlProgress(null);
-      } else {
-        setDlProgress(p);
-      }
-    })
-      .then((off) => {
-        if (disposed) off();
-        else unlisten = off;
-      })
-      .catch((e) => console.warn("[clay-mic] subscribe progress failed:", e));
-    return () => {
-      disposed = true;
-      unlisten?.();
     };
   }, []);
 
@@ -158,7 +135,7 @@ export function Settings({
         setDlProgress(null);
       }
     },
-    [refreshStatus],
+    [refreshStatus, setDlProgress],
   );
 
   const dirty = baseline !== null && JSON.stringify(config) !== baseline;

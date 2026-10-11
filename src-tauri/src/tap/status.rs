@@ -3,7 +3,7 @@
 use super::*;
 use super::host::{
     configured_identity_display, configured_mac, find_host_pid_ex, pid_is_wudfhost,
-    read_marker_pid, resolve_injected_pid,
+    read_marker_pid,
 };
 use super::udp::ensure_server;
 
@@ -20,7 +20,7 @@ pub fn status() -> TapStatus {
         (None, Some(error))
     });
     let host_alive = host_pid.is_some_and(pid_is_wudfhost);
-    let injected_pid = resolve_injected_pid(host_pid);
+    let injected = super::injected_in_host(host_pid);
     let listening = SERVER_RUNNING.load(Ordering::SeqCst) == 1;
     let client_connected = client_connected();
     let dll_version = if client_connected {
@@ -36,7 +36,7 @@ pub fn status() -> TapStatus {
         dll_ready,
         host_pid,
         host_alive,
-        injected: injected_pid.is_some(),
+        injected,
         listening,
         client_connected,
         last_error: LAST_ERROR.lock().unwrap().clone(),
@@ -73,7 +73,8 @@ pub fn refresh_status_async() {
     let fresh = status();
     // Marker from a previous session: bring UDP up so the resident hook's
     // heartbeat can mark the channel live without waiting for suppression.
-    if fresh.injected && !fresh.listening && read_marker_pid().is_some() {
+    // Gate on the marker, not `injected`: `injected` needs that heartbeat.
+    if !fresh.listening && read_marker_pid().is_some() {
         let _ = ensure_server();
     }
     let fresh = status();
