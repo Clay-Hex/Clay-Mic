@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "clay-mic"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -629,15 +629,15 @@ dependencies = [
 
 [[package]]
 name = "clay-mic-keyslots"
-version = "1.1.1"
+version = "1.2.0"
 
 [[package]]
 name = "clay-mic-updater"
-version = "1.1.1"
+version = "1.2.0"
 
 [[package]]
 name = "clay-tap"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "min_hook_rs",
 ]
