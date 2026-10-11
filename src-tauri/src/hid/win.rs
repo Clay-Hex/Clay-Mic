@@ -7,7 +7,6 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use crate::interception::{
     Driver, KeyEvent, KEYBOARD_SLOT_COUNT, KEY_FILTER_ALL, KEY_FILTER_NONE, STROKE_KEY_UP,
@@ -173,23 +172,20 @@ pub fn set_suppression(enabled: bool, device_path: Option<String>) -> Result<(),
 /// when `device_events` reports a HID interface change (plus a slow fallback).
 fn run_capture_loop(api: &Driver, ctx: *mut std::ffi::c_void) {
     const TIMEOUT_MS: u32 = 50;
-    /// Safety net for a missed interface notification; not the normal path.
-    const FALLBACK: Duration = Duration::from_secs(10);
 
     let mut strokes = [KeyEvent::default(); 8];
     let mut first = true;
-    let mut next_fallback = Instant::now();
 
     loop {
         if STOP_REQUESTED.load(Ordering::SeqCst) {
             break;
         }
 
-        // Re-check the binding only when a HID interface arrived or was removed
-        // (see `device_events`), or on the slow fallback tick.
-        let now = Instant::now();
-        if RECONCILE_PENDING.swap(false, Ordering::SeqCst) || now >= next_fallback {
-            next_fallback = now + FALLBACK;
+        // Re-check the binding only when `device_events` reports a HID interface
+        // change. The steady state must touch the driver through nothing but the
+        // wait/read below: extra filter IOCTLs on this thread are what make the
+        // process un-terminable at exit.
+        if RECONCILE_PENDING.swap(false, Ordering::SeqCst) {
             reconcile(api, ctx);
         }
 
@@ -292,13 +288,9 @@ fn reconcile(api: &Driver, ctx: *mut std::ffi::c_void) {
 
     match probe_devices(api, ctx) {
         Some(dev) if dev == bound => {
-            // Same slot: re-arm only when the read-back says it is not ours
-            // (a driver reload or filter-chain repair can clear it without any
-            // device event). Without a read-back, re-arm defensively.
-            match api.key_filter(ctx, dev) {
-                Some(mask) if mask == KEY_FILTER_ALL => {}
-                _ => api.set_key_filter(ctx, dev, KEY_FILTER_ALL),
-            }
+            // Already armed on the right slot: leave the driver alone. Re-arming
+            // (or even reading the filter back) from this thread is what wedges
+            // the Interception wait at process exit.
         }
         Some(dev) => {
             if bound > 0 {

@@ -52,10 +52,6 @@ type Context = *mut c_void;
 /// it is handed, so passing an integer here would take the process down.
 type DeviceSelector = unsafe extern "C" fn(i32) -> i32;
 
-/// `interception_get_filter`, resolved optionally on purpose: an older DLL
-/// without it should skip the filter read-back rather than refuse to load.
-type FilterReader = unsafe extern "C" fn(Context, i32) -> u16;
-
 /// Device the pending [`Driver::set_key_filter`] call wants to target.
 static FILTER_DEVICE: AtomicI32 = AtomicI32::new(0);
 
@@ -118,8 +114,6 @@ dll_exports! {
 pub struct Driver {
     _library: libloading::Library,
     exports: Exports,
-    /// `interception_get_filter`, `None` when the loaded DLL lacks it.
-    read_filter: Option<FilterReader>,
 }
 
 // SAFETY: the Interception context API is documented as safe to drive from any
@@ -138,20 +132,9 @@ impl Driver {
         // SAFETY: `Exports::resolve` reads function pointers out of the genuine
         // Interception build, and the declared signatures mirror its header.
         let exports = unsafe { Exports::resolve(&library)? };
-        // SAFETY: same header and signature; a miss just degrades the read-back.
-        let read_filter = match unsafe {
-            library.get::<FilterReader>(b"interception_get_filter\0")
-        } {
-            Ok(symbol) => Some(*symbol),
-            Err(error) => {
-                log::warn!("interception_get_filter unavailable, filter read-back off: {error}");
-                None
-            }
-        };
         Ok(Self {
             _library: library,
             exports,
-            read_filter,
         })
     }
 
@@ -175,12 +158,6 @@ impl Driver {
         let _guard = FILTER_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         FILTER_DEVICE.store(device, Ordering::Relaxed);
         unsafe { (self.exports.set_key_filter)(context, only_filtered_device, mask) }
-    }
-
-    /// Filter currently armed on `device`, `None` when the loaded DLL does not
-    /// export `interception_get_filter` — callers then skip their read-back.
-    pub fn key_filter(&self, context: Context, device: i32) -> Option<u16> {
-        self.read_filter.map(|read| unsafe { read(context, device) })
     }
 
     /// Block until a filtered device has input, or `timeout_ms` elapses.
